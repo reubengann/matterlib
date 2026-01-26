@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Iterable, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, Optional, Sequence, Tuple, cast
 from abc import ABC, abstractmethod
 import html
 import threading
@@ -10,6 +10,12 @@ import traceback
 
 import ipywidgets as widgets
 import k3d
+import numpy as np
+
+# k3d publishes runtime types but lacks accurate type stubs; fall back to Any so
+# static checking does not mis-classify the factory functions/modules.
+K3DPlot = Any
+K3DLine = Any
 
 
 Bounds = Tuple[float, float, float, float, float, float]
@@ -25,7 +31,7 @@ class Player:
     reset_button: widgets.Button
     title_widget: widgets.HTML
     extent_obj: Any
-    plot: k3d.plot
+    plot: K3DPlot
 
     def reset(self) -> None:
         """Return to the first frame and pause."""
@@ -50,7 +56,7 @@ class K3DAnimator(ABC):
     """Stateful animation interface driven by wall-clock dt."""
 
     @abstractmethod
-    def on_start(self, plot: k3d.plot) -> None:
+    def on_start(self, plot: K3DPlot) -> None:
         """Create k3d objects and initialize state.
 
         Should be idempotent: safe to call after a reset. If you add objects to
@@ -79,7 +85,7 @@ class StatefulPlayer:
     error_banner: widgets.HTML
     traceback_accordion: widgets.Accordion
     extent_obj: Any
-    plot: k3d.plot
+    plot: K3DPlot
     _stop_event: threading.Event
     _thread: Optional[threading.Thread]
     _lock: threading.Lock
@@ -129,7 +135,7 @@ def _validate_frames(frames: Dict[str, Sequence[Any]]) -> int:
     return n
 
 
-def _make_extent(camera_bounds: Bounds) -> k3d.line:
+def _make_extent(camera_bounds: Bounds) -> K3DLine:
     xmin, ymin, zmin, xmax, ymax, zmax = camera_bounds
     if not (xmin < xmax and ymin < ymax and zmin < zmax):
         raise ValueError("camera_bounds must satisfy xmin<xmax, ymin<ymax, zmin<zmax")
@@ -177,7 +183,7 @@ def _make_extent(camera_bounds: Bounds) -> k3d.line:
     )
 
 
-def make_dark_plot(**kwargs: Any) -> k3d.plot:
+def make_dark_plot(**kwargs: Any) -> K3DPlot:
     """Convenience: create a k3d plot with dark-theme defaults.
 
     Users can override any default by passing the same keyword in kwargs.
@@ -192,12 +198,12 @@ def make_dark_plot(**kwargs: Any) -> k3d.plot:
         axes=["x", "y", "z"],
     )
     defaults.update(kwargs)
-    return k3d.plot(**defaults)
+    return cast(Callable[..., K3DPlot], k3d.plot)(**defaults)
 
 
 def make_player(
     *,
-    plot: k3d.plot,
+    plot: K3DPlot,
     frames: Dict[str, Sequence[Any]],
     render_fn: Callable[[int], None],
     dt: float,
@@ -313,7 +319,7 @@ def _make_error_widgets() -> tuple[widgets.HTML, widgets.Accordion, widgets.Outp
 
 def make_stateful_player(
     *,
-    plot: k3d.plot,
+    plot: K3DPlot,
     animator: K3DAnimator,
     target_fps: float,
     camera_bounds: Bounds,
@@ -492,3 +498,69 @@ def make_stateful_player(
     player._stop_callback = stop_playback
 
     return player
+
+
+def axis_aligned_plane(
+    *,
+    axis: str,  # 'x', 'y', or 'z'  (the normal axis)
+    value: float,  # coordinate along that axis where the plane sits
+    umin: float,
+    umax: float,  # bounds along first in-plane axis
+    vmin: float,
+    vmax: float,  # bounds along second in-plane axis
+    color: int = 0x444444,
+    opacity: float = 0.6,
+    wireframe: bool = False,
+):
+    """
+    Create an axis-aligned rectangular plane as a k3d.mesh.
+
+    axis:
+      'x' => plane is YZ at x=value
+      'y' => plane is XZ at y=value
+      'z' => plane is XY at z=value
+
+    u/v bounds correspond to the plane's two in-plane axes:
+      axis='x' => u=y, v=z
+      axis='y' => u=x, v=z
+      axis='z' => u=x, v=y
+    """
+    axis = axis.lower().strip()
+    if axis not in ("x", "y", "z"):
+        raise ValueError("axis must be one of: 'x', 'y', 'z'")
+
+    # Four corners in a consistent winding order
+    if axis == "x":  # YZ plane at x=value
+        corners = [
+            (value, umin, vmin),
+            (value, umax, vmin),
+            (value, umax, vmax),
+            (value, umin, vmax),
+        ]
+    elif axis == "y":  # XZ plane at y=value
+        corners = [
+            (umin, value, vmin),
+            (umax, value, vmin),
+            (umax, value, vmax),
+            (umin, value, vmax),
+        ]
+    else:  # axis == "z": XY plane at z=value
+        corners = [
+            (umin, vmin, value),
+            (umax, vmin, value),
+            (umax, vmax, value),
+            (umin, vmax, value),
+        ]
+
+    vertices = np.array(corners, dtype=np.float32)
+
+    # Two triangles: (0,1,2) and (0,2,3)
+    indices = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.uint32)
+
+    return k3d.mesh(
+        vertices=vertices,
+        indices=indices,
+        color=color,
+        opacity=opacity,
+        wireframe=wireframe,
+    )

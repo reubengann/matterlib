@@ -7,6 +7,7 @@ from .k3d_anim import (
     make_player,
     make_stateful_player,
     make_dark_plot,
+    axis_aligned_plane,
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "make_player",
     "make_stateful_player",
     "make_dark_plot",
+    "axis_aligned_plane",
 ]
