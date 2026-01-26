@@ -7,6 +7,8 @@ from .k3d_anim import (
     make_player,
     make_stateful_player,
     make_dark_plot,
+    set_camera_overhead,
+    set_camera_side,
     axis_aligned_plane,
 )
 
@@ -17,5 +19,7 @@ __all__ = [
     "make_player",
     "make_stateful_player",
     "make_dark_plot",
+    "set_camera_overhead",
+    "set_camera_side",
     "axis_aligned_plane",
 ]

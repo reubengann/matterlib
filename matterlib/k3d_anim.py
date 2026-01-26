@@ -201,6 +201,108 @@ def make_dark_plot(**kwargs: Any) -> K3DPlot:
     return cast(Callable[..., K3DPlot], k3d.plot)(**defaults)
 
 
+def set_camera_overhead(
+    plot: K3DPlot,
+    *,
+    center: Sequence[float] = (0.0, 0.0, 0.0),
+    height: float = 10.0,
+    up: Sequence[float] = (0.0, 1.0, 0.0),
+) -> None:
+    """Place the camera above looking down with +x right and +y up.
+
+    K3D expects `plot.camera` as 9 floats: camera position (x, y, z), look-at
+    target (x, y, z), and up vector (x, y, z) [1]_. This helper sets:
+
+    * position = (center.x, center.y, center.z + height)
+    * target   = center
+    * up       = provided `up` (defaults to +Y)
+
+    Parameters
+    ----------
+    plot:
+        The k3d plot whose camera will be set.
+    center:
+        Point the camera looks at.
+    height:
+        Distance above `center` along +Z to place the camera.
+    up:
+        Up vector; keep it orthogonal to the view direction for best results.
+
+    References
+    ----------
+    .. [1] https://k3d-jupyter.org/reference/factory.plot.html
+    """
+
+    if len(center) != 3 or len(up) != 3:
+        raise ValueError("center and up must be length-3 sequences")
+
+    cx, cy, cz = map(float, center)
+    ux, uy, uz = map(float, up)
+    pos = (cx, cy, cz + float(height))
+    look = (cx, cy, cz)
+
+    # Avoid a degenerate up vector that is parallel to the view direction.
+    view = np.array(look) - np.array(pos)
+    up_vec = np.array(up)
+    if np.allclose(np.cross(view, up_vec), 0.0):
+        raise ValueError("up vector must not be parallel to the view direction")
+
+    plot.camera = [
+        pos[0],
+        pos[1],
+        pos[2],
+        look[0],
+        look[1],
+        look[2],
+        ux,
+        uy,
+        uz,
+    ]
+
+
+def set_camera_side(
+    plot: K3DPlot,
+    *,
+    center: Sequence[float] = (0.0, 0.0, 0.0),
+    distance: float = 10.0,
+    up: Sequence[float] = (0.0, 0.0, 1.0),
+) -> None:
+    """Place the camera on -Y looking toward +Y with +Z up and +X right.
+
+    Sets `plot.camera` as [pos, target, up]:
+      * position = (center.x, center.y - distance, center.z)
+      * target   = center
+      * up       = provided `up` (defaults to +Z)
+
+    This yields a side view with x to the right and z up.
+    """
+
+    if len(center) != 3 or len(up) != 3:
+        raise ValueError("center and up must be length-3 sequences")
+
+    cx, cy, cz = map(float, center)
+    ux, uy, uz = map(float, up)
+    pos = (cx, cy - float(distance), cz)
+    look = (cx, cy, cz)
+
+    view = np.array(look) - np.array(pos)
+    up_vec = np.array(up)
+    if np.allclose(np.cross(view, up_vec), 0.0):
+        raise ValueError("up vector must not be parallel to the view direction")
+
+    plot.camera = [
+        pos[0],
+        pos[1],
+        pos[2],
+        look[0],
+        look[1],
+        look[2],
+        ux,
+        uy,
+        uz,
+    ]
+
+
 def make_player(
     *,
     plot: K3DPlot,
@@ -320,7 +422,7 @@ def _make_error_widgets() -> tuple[widgets.HTML, widgets.Accordion, widgets.Outp
 def make_stateful_player(
     *,
     plot: K3DPlot,
-    animator: K3DAnimator,
+    animator: K3DAnimator | Iterable[K3DAnimator],
     target_fps: float,
     camera_bounds: Bounds,
     title: str = "Animation",
@@ -332,11 +434,24 @@ def make_stateful_player(
     throttled to `target_fps`; if `target_fps<=0`, it defaults to 60. Exceptions
     are captured and rendered in the widget UI.
 
-    Reset behavior: the player calls `animator.on_reset()` while paused. Keep
-    `on_reset` responsible for restoring both state and visuals (no automatic
-    `on_start` on reset). `on_start` should be idempotent and typically runs
-    only once.
+    The `animator` argument may be a single `K3DAnimator` or an iterable of
+    animators. When multiple are provided, their `on_start`, `on_update`, and
+    `on_reset` methods are invoked sequentially each step.
+
+    Reset behavior: the player calls `on_reset()` on each animator while paused.
+    Keep `on_reset` responsible for restoring both state and visuals (no
+    automatic `on_start` on reset). `on_start` should be idempotent and
+    typically runs only once.
     """
+
+    # Normalize animator(s) into a list.
+    if isinstance(animator, Iterable) and not isinstance(animator, K3DAnimator):
+        animators = list(animator)
+    else:
+        animators = [cast(K3DAnimator, animator)]
+
+    if not animators:
+        raise ValueError("animator iterable must contain at least one animator")
 
     interval = 1.0 / target_fps if target_fps and target_fps > 0 else 1.0 / 60.0
 
@@ -412,7 +527,8 @@ def make_stateful_player(
                 dt = now - last
                 last = now
                 try:
-                    animator.on_update(dt)
+                    for anim in animators:
+                        anim.on_update(dt)
                 except Exception as exc:  # pragma: no cover - UI side
                     handle_exception(exc)
                     return
@@ -431,7 +547,8 @@ def make_stateful_player(
             clear_error()
             if not started:
                 try:
-                    animator.on_start(plot)
+                    for anim in animators:
+                        anim.on_start(plot)
                 except Exception as exc:  # pragma: no cover - UI side
                     handle_exception(exc)
                     return
@@ -456,7 +573,8 @@ def make_stateful_player(
         stop_playback()
         clear_error()
         try:
-            animator.on_reset()
+            for anim in animators:
+                anim.on_reset()
             started = True
         except Exception as exc:  # pragma: no cover - UI side
             handle_exception(exc)
@@ -511,6 +629,8 @@ def axis_aligned_plane(
     color: int = 0x444444,
     opacity: float = 0.6,
     wireframe: bool = False,
+    texture: bytes | None = None,
+    texture_rotation_deg: int = 0,
 ):
     """
     Create an axis-aligned rectangular plane as a k3d.mesh.
@@ -524,10 +644,19 @@ def axis_aligned_plane(
       axis='x' => u=y, v=z
       axis='y' => u=x, v=z
       axis='z' => u=x, v=y
+
+    texture_rotation_deg:
+      Clockwise rotation of the texture coordinates in degrees. Must be a
+      multiple of 90 (0, 90, 180, 270). Useful when the provided image is
+      oriented differently from the desired mapping.
     """
     axis = axis.lower().strip()
     if axis not in ("x", "y", "z"):
         raise ValueError("axis must be one of: 'x', 'y', 'z'")
+
+    rotation = int(texture_rotation_deg) % 360
+    if rotation % 90 != 0:
+        raise ValueError("texture_rotation_deg must be a multiple of 90")
 
     # Four corners in a consistent winding order
     if axis == "x":  # YZ plane at x=value
@@ -554,6 +683,26 @@ def axis_aligned_plane(
 
     vertices = np.array(corners, dtype=np.float32)
 
+    # Cover the quad with the full texture in vertex winding order.
+    base_uvs = np.array(
+        [
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [1.0, 1.0],
+            [0.0, 1.0],
+        ],
+        dtype=np.float32,
+    )
+    if rotation:
+        # Rotate UVs around the texture center (0.5, 0.5).
+        theta = np.deg2rad(rotation)
+        c, s = float(np.cos(theta)), float(np.sin(theta))
+        rot = np.array([[c, -s], [s, c]], dtype=np.float32)
+        centered = base_uvs - 0.5
+        uvs = centered @ rot.T + 0.5
+    else:
+        uvs = base_uvs
+
     # Two triangles: (0,1,2) and (0,2,3)
     indices = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.uint32)
 
@@ -563,4 +712,7 @@ def axis_aligned_plane(
         color=color,
         opacity=opacity,
         wireframe=wireframe,
+        texture=texture,
+        texture_file_format="jpg",
+        uvs=uvs,
     )
