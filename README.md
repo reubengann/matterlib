@@ -103,3 +103,68 @@ player = make_stateful_player(
 
 player.ui
 ```
+
+## 2D canvas animation (ipycanvas + RepeatedTimer)
+
+For 2D widgets, use `Canvas2DAnimator` + `Canvas2DPlayer`. The player follows the
+`example_2d.py` pattern: a `RepeatedTimer` drives frames at `target_fps`, and parameter
+widgets are declared via `ParamSpec`.
+
+```python
+import numpy as np
+import ipywidgets as widgets
+from IPython.display import display
+from matterlib import Canvas2DAnimator, Canvas2DPlayer, ParamSpec
+
+
+class Pendulum2D(Canvas2DAnimator):
+    PARAMS = {
+        "L": ParamSpec("float_slider", default=1.2, min=0.2, max=3.0, step=0.01, description="L (m)", on_change="reset"),
+        "g": ParamSpec("float_slider", default=9.81, min=0.1, max=30.0, step=0.01, description="g (m/s²)", on_change="reset"),
+        "damp": ParamSpec("float_slider", default=0.02, min=0.0, max=2.0, step=0.01, description="damping", on_change="reset"),
+    }
+
+    def __init__(self) -> None:
+        self.theta0 = 0.9
+        self.omega0 = 0.0
+        self.theta = self.theta0
+        self.omega = self.omega0
+        self.px_per_m = 140.0
+        self.pivot = (320, 80)
+
+    def on_start(self, canvas):
+        self.canvas = canvas
+
+    def on_reset(self):
+        self.theta = self.theta0
+        self.omega = self.omega0
+        self._draw()
+
+    def on_frame(self, dt: float):
+        a = -(self.g / self.L) * np.sin(self.theta) - self.damp * self.omega
+        self.omega += a * dt
+        self.theta += self.omega * dt
+        self._draw()
+
+    def _draw(self):
+        x = self.pivot[0] + (self.L * self.px_per_m) * np.sin(self.theta)
+        y = self.pivot[1] + (self.L * self.px_per_m) * np.cos(self.theta)
+        c = self.canvas
+        c.fill_style = "#0b0e14"
+        c.fill_rect(0, 0, c.width, c.height)
+        c.stroke_style = "rgba(255,255,255,0.9)"
+        c.line_width = 3
+        c.stroke_line(self.pivot[0], self.pivot[1], x, y)
+        c.fill_style = "#00ffcc"
+        c.fill_circle(x, y, 16)
+
+
+player = Canvas2DPlayer(animator=Pendulum2D(), target_fps=60, dt=1 / 240, title="Pendulum 2D")
+display(widgets.HBox([player.ui, player.canvas]))
+```
+
+The player handles:
+- Play/Pause/Step/Reset controls.
+- Recreating the `RepeatedTimer` if `target_fps` changes.
+- Parameter widgets that trigger `reset`/`redraw`/`restart_timer` based on `ParamSpec.on_change`.
+- Drawing the first frame immediately (disable via `auto_draw_initial=False` if you prefer a blank canvas until Play).
