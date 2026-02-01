@@ -209,6 +209,10 @@ class Canvas2DPlayer:
     Uses RepeatedTimer (same pattern as example_2d.py) to invoke animator(s)
     at a fixed interval derived from target_fps. Exposes play/pause/step/reset
     controls and renders errors in-widget.
+
+    Canvas sizing:
+    - Pass an existing Canvas via `canvas=` to control size explicitly.
+    - Or pass `width`/`height` (used when canvas is not provided).
     """
 
     def __init__(

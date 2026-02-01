@@ -168,3 +168,4 @@ The player handles:
 - Recreating the `RepeatedTimer` if `target_fps` changes.
 - Parameter widgets that trigger `reset`/`redraw`/`restart_timer` based on `ParamSpec.on_change`.
 - Drawing the first frame immediately (disable via `auto_draw_initial=False` if you prefer a blank canvas until Play).
+- Canvas sizing: pass `width`/`height` or supply your own `Canvas` instance via `canvas=`.
