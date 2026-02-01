@@ -182,9 +182,19 @@ def _widget_from_spec(name: str, spec: ParamSpec) -> widgets.Widget:
         opts = list(spec.options or [])
         if not opts:
             raise ValueError(f"Param '{name}' dropdown requires non-empty options")
+        # ipywidgets.Dropdown supports options as:
+        # - sequence of values (label == value)
+        # - sequence of (label, value) pairs
+        # We want ParamSpec.default to refer to the underlying value (not the label).
+        values: list[Any] = []
+        for o in opts:
+            if isinstance(o, tuple) and len(o) == 2:
+                values.append(o[1])
+            else:
+                values.append(o)
         return widgets.Dropdown(
             options=opts,
-            value=spec.default if spec.default in opts else opts[0],
+            value=spec.default if spec.default in values else values[0],
             description=desc,
             tooltip=spec.tooltip or "",
             style={"description_width": "80px"},
@@ -345,7 +355,8 @@ class Canvas2DPlayer:
         except Exception:
             val = provider  # type: ignore
         try:
-            dt = float(val)
+            # Tell the type checker we've attempted the callable() branch above.
+            dt = float(val)  # type: ignore[arg-type]
         except Exception:
             dt = 1.0 / max(self._target_fps, 1.0)
         if dt <= 0:
