@@ -110,58 +110,15 @@ For 2D widgets, use `Canvas2DAnimator` + `Canvas2DPlayer`. The player follows th
 `example_2d.py` pattern: a `RepeatedTimer` drives frames at `target_fps`, and parameter
 widgets are declared via `ParamSpec`.
 
-```python
-import numpy as np
-import ipywidgets as widgets
-from IPython.display import display
-from matterlib import Canvas2DAnimator, Canvas2DPlayer, ParamSpec
+### Instructions
 
+Inherit from Canvas2DAnimator and implement 
+ - on_start
+ - on_update
+ - on_draw
+ - on_reset
 
-class Pendulum2D(Canvas2DAnimator):
-    PARAMS = {
-        "L": ParamSpec("float_slider", default=1.2, min=0.2, max=3.0, step=0.01, description="L (m)", on_change="reset"),
-        "g": ParamSpec("float_slider", default=9.81, min=0.1, max=30.0, step=0.01, description="g (m/s²)", on_change="reset"),
-        "damp": ParamSpec("float_slider", default=0.02, min=0.0, max=2.0, step=0.01, description="damping", on_change="reset"),
-    }
-
-    def __init__(self) -> None:
-        self.theta0 = 0.9
-        self.omega0 = 0.0
-        self.theta = self.theta0
-        self.omega = self.omega0
-        self.px_per_m = 140.0
-        self.pivot = (320, 80)
-
-    def on_start(self, canvas):
-        self.canvas = canvas
-
-    def on_reset(self):
-        self.theta = self.theta0
-        self.omega = self.omega0
-        self._draw()
-
-    def on_frame(self, dt: float):
-        a = -(self.g / self.L) * np.sin(self.theta) - self.damp * self.omega
-        self.omega += a * dt
-        self.theta += self.omega * dt
-        self._draw()
-
-    def _draw(self):
-        x = self.pivot[0] + (self.L * self.px_per_m) * np.sin(self.theta)
-        y = self.pivot[1] + (self.L * self.px_per_m) * np.cos(self.theta)
-        c = self.canvas
-        c.fill_style = "#0b0e14"
-        c.fill_rect(0, 0, c.width, c.height)
-        c.stroke_style = "rgba(255,255,255,0.9)"
-        c.line_width = 3
-        c.stroke_line(self.pivot[0], self.pivot[1], x, y)
-        c.fill_style = "#00ffcc"
-        c.fill_circle(x, y, 16)
-
-
-player = Canvas2DPlayer(animator=Pendulum2D(), target_fps=60, dt=1 / 240, title="Pendulum 2D")
-display(widgets.HBox([player.ui, player.canvas]))
-```
+It is helpful to call `with ipycanvas.hold_canvas` context manager during the draw call.
 
 The player handles:
 - Play/Pause/Step/Reset controls.
@@ -169,3 +126,190 @@ The player handles:
 - Parameter widgets that trigger `reset`/`redraw`/`restart_timer` based on `ParamSpec.on_change`.
 - Drawing the first frame immediately (disable via `auto_draw_initial=False` if you prefer a blank canvas until Play).
 - Canvas sizing: pass `width`/`height` or supply your own `Canvas` instance via `canvas=`.
+
+```python
+from ipycanvas import hold_canvas
+from matterlib import Canvas2DAnimator, Canvas2DPlayer, ParamSpec
+import ipywidgets as widgets
+from IPython.display import display
+
+class EulerOrbitAnimator(Canvas2DAnimator):
+    # Expose key simulation controls as widgets in the player UI.
+    PARAMS = {
+        "method": ParamSpec(
+            kind="dropdown",
+            default="euler",
+            options=[
+                ("Euler", "euler"),
+                ("Euler-Cromer", "euler_cromer"),
+                ("Velocity Verlet", "verlet"),
+                ("RK4", "rk4"),
+            ],
+            description="method",
+            on_change="reset",
+        ),
+        "dt_scale": ParamSpec(
+            kind="int_slider",
+            default=200,
+            min=1,
+            max=600,
+            step=1,
+            description="substeps",
+            on_change="reset",
+        ),
+    }
+
+    def __init__(self, x0, y0, vx0, vy0, dt_scale: float = 1.0, method: str = "euler") -> None:
+        self.initial = {'x0': x0, 'y0': y0, 'vx0': vx0, 'vy0': vy0}
+        self.dt_scale = float(dt_scale)
+        self.method = str(method).lower().strip()
+        self.t = 0.0
+        self.x = float(x0)
+        self.y = float(y0)
+        self.vx = float(vx0)
+        self.vy = float(vy0)
+        self.trail: list[tuple[float, float]] = [(self.x, self.y)]
+
+    def on_reset(self):
+        self.t = 0.0
+        self.x = float(self.initial['x0'])
+        self.y = float(self.initial['y0'])
+        self.vx = float(self.initial['vx0'])
+        self.vy = float(self.initial['vy0'])
+        self.trail = [(self.x, self.y)]
+    
+    def on_start(self, canvas):
+        self.canvas = canvas
+
+        # --- world (AU) -> pixel transform ---
+        # Keep the origin (sun) centered and scale so r≈1 AU is visible.
+        self.world_half_width = 1.6  # AU visible from center to edge
+        self.cx = canvas.width / 2
+        self.cy = canvas.height / 2
+        self.scale = min(canvas.width, canvas.height) / (2 * self.world_half_width)
+
+    def _to_canvas(self, x: float, y: float) -> tuple[float, float]:
+        # +x right, +y up in world coords
+        return (self.cx + x * self.scale, self.cy - y * self.scale)
+
+    def on_update(self, dt: float):
+        # Treat dt_scale as "substeps per update": take n smaller Euler steps
+        # whose total time equals the provided dt.
+        n = max(1, int(round(self.dt_scale)))
+        dt_step = dt / n
+
+        def _accel(x: float, y: float) -> tuple[float, float]:
+            r = (x * x + y * y) ** 0.5
+            return (-GM * x / r**3, -GM * y / r**3)
+
+        def _f(state: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+            x, y, vx, vy = state
+            ax, ay = _accel(x, y)
+            return (vx, vy, ax, ay)
+
+        for _ in range(n):
+            ax, ay = _accel(self.x, self.y)
+
+            if self.method == "verlet":
+                # Velocity Verlet
+                x_new = self.x + self.vx * dt_step + 0.5 * ax * dt_step**2
+                y_new = self.y + self.vy * dt_step + 0.5 * ay * dt_step**2
+
+                ax_new, ay_new = _accel(x_new, y_new)
+                vx_new = self.vx + 0.5 * (ax + ax_new) * dt_step
+                vy_new = self.vy + 0.5 * (ay + ay_new) * dt_step
+
+                self.x, self.y, self.vx, self.vy = x_new, y_new, vx_new, vy_new
+
+            elif self.method == "euler_cromer":
+                # Euler-Cromer: update v, then x using updated v
+                vx_new = self.vx + ax * dt_step
+                vy_new = self.vy + ay * dt_step
+                x_new = self.x + vx_new * dt_step
+                y_new = self.y + vy_new * dt_step
+                self.x, self.y, self.vx, self.vy = x_new, y_new, vx_new, vy_new
+
+            elif self.method == "rk4":
+                # RK4 on state = (x, y, vx, vy)
+                s0 = (self.x, self.y, self.vx, self.vy)
+                k1 = _f(s0)
+                s1 = (
+                    s0[0] + 0.5 * dt_step * k1[0],
+                    s0[1] + 0.5 * dt_step * k1[1],
+                    s0[2] + 0.5 * dt_step * k1[2],
+                    s0[3] + 0.5 * dt_step * k1[3],
+                )
+                k2 = _f(s1)
+                s2 = (
+                    s0[0] + 0.5 * dt_step * k2[0],
+                    s0[1] + 0.5 * dt_step * k2[1],
+                    s0[2] + 0.5 * dt_step * k2[2],
+                    s0[3] + 0.5 * dt_step * k2[3],
+                )
+                k3 = _f(s2)
+                s3 = (
+                    s0[0] + dt_step * k3[0],
+                    s0[1] + dt_step * k3[1],
+                    s0[2] + dt_step * k3[2],
+                    s0[3] + dt_step * k3[3],
+                )
+                k4 = _f(s3)
+
+                self.x = s0[0] + (dt_step / 6.0) * (k1[0] + 2 * k2[0] + 2 * k3[0] + k4[0])
+                self.y = s0[1] + (dt_step / 6.0) * (k1[1] + 2 * k2[1] + 2 * k3[1] + k4[1])
+                self.vx = s0[2] + (dt_step / 6.0) * (k1[2] + 2 * k2[2] + 2 * k3[2] + k4[2])
+                self.vy = s0[3] + (dt_step / 6.0) * (k1[3] + 2 * k2[3] + 2 * k3[3] + k4[3])
+
+            else:
+                # Forward Euler (world units)
+                self.x = self.x + self.vx * dt_step
+                self.y = self.y + self.vy * dt_step
+                self.vx = self.vx + ax * dt_step
+                self.vy = self.vy + ay * dt_step
+
+        # Record ONE point per rendered frame (otherwise you add hundreds of
+        # nearly-identical points and can visually "catch" partial-looking states).
+        self.trail.append((self.x, self.y))
+
+    def on_draw(self):
+        c = self.canvas
+        with hold_canvas(c):
+            c.fill_style = "#0b0e14"
+            c.fill_rect(0, 0, c.width, c.height)
+
+            # Trail (convert world -> pixels)
+            if len(self.trail) >= 2:
+                c.stroke_style = "rgba(255,255,255,0.35)"
+                c.line_width = 2
+                c.begin_path()
+                x0c, y0c = self._to_canvas(*self.trail[0])
+                c.move_to(x0c, y0c)
+                stride = 2 if len(self.trail) > 2000 else 1
+                for (xw, yw) in self.trail[1::stride]:
+                    xc, yc = self._to_canvas(xw, yw)
+                    c.line_to(xc, yc)
+                c.stroke()
+
+            # Particle (convert world -> pixels)
+            px, py = self._to_canvas(self.x, self.y)
+            c.fill_style = "#00ffcc"
+            c.fill_circle(px, py, 6)
+            
+# Circular-orbit initial conditions at r=1 AU require vy0 = sqrt(GM/r) = 2π.
+# Use lots of substeps because forward Euler is unstable for orbits at large dt.
+anim = EulerOrbitAnimator(x0, y0, vx0, vy0, dt_scale=200, method="verlet")
+player = Canvas2DPlayer(animator=anim, target_fps=30, dt=1 / 60, title="Orbit (circular IC)")
+player.canvas.layout = widgets.Layout(
+    width="640px",
+    height="420px",
+    flex="0 0 auto",
+)
+display(
+    widgets.HBox(
+        [
+            widgets.VBox([player.ui, widgets.HBox([player.canvas])])
+        ],
+        layout=widgets.Layout(align_items="flex-start", gap="12px"),
+    )
+)
+```
