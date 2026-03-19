@@ -10,11 +10,11 @@ from .k3d_anim import (
     make_player,
     make_stateful_player,
     make_chunked_player,
-    make_dark_plot,
     set_camera_overhead,
     set_camera_side,
     axis_aligned_plane,
 )
+from .k3d_helpers import make_dark_plot, surface_from_function
 from .canvas2d_anim import (
     RepeatedTimer,
     Canvas2DAnimator,
@@ -22,6 +22,7 @@ from .canvas2d_anim import (
     ParamSpec,
     BoundParam,
 )
+from .symbolic import sympy_phys as spp
 
 __all__ = [
     "Player",
@@ -42,4 +43,5 @@ __all__ = [
     "Canvas2DPlayer",
     "ParamSpec",
     "BoundParam",
+    "spp",
 ]

@@ -32,9 +32,16 @@ def normalize_units(
     eq: Equality, decimal: bool = True, sigfigs: int | None = None
 ) -> Equality:
     rhs = sp.cancel(eq.rhs)
-    coeff, units = rhs.as_coeff_Mul()
+    coeff = sp.Integer(1)
+    unit_factors: list[sp.Expr] = []
+    for factor in sp.Mul.make_args(rhs):
+        if factor.is_number:
+            coeff *= factor
+        else:
+            unit_factors.append(factor)
+    units = sp.Mul(*unit_factors) if unit_factors else sp.Integer(1)
 
-    if decimal and coeff.is_Rational and coeff.q != 1:
+    if decimal and coeff.is_number and not coeff.is_Integer:
         coeff = coeff.evalf()
 
     if sigfigs is not None:
@@ -214,6 +221,7 @@ class _SympyPhys:
     def __init__(self):
         self.units = _UnitsNamespace(units)
         self.Derivative = sp.Derivative
+        self.lambdify = sp.lambdify
 
     def Eq(self, lhs: sp.Expr, rhs: sp.Expr, **kwargs: Any) -> Equation:
         return Equation(cast(Equality, sp.Eq(lhs, rhs, **kwargs)))

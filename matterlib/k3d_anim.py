@@ -56,7 +56,9 @@ class Player:
     title_widget: widgets.HTML
     extent_obj: Any
     plot: K3DPlot
-    _set_frames_callback: Optional[Callable[[Dict[str, Sequence[Any]], int | None], None]] = None
+    _set_frames_callback: Optional[
+        Callable[[Dict[str, Sequence[Any]], int | None], None]
+    ] = None
 
     def reset(self) -> None:
         """Return to the first frame and pause."""
@@ -82,7 +84,9 @@ class Player:
         """
 
         if self._set_frames_callback is None:
-            raise RuntimeError("This Player does not support set_frames() (internal callback missing).")
+            raise RuntimeError(
+                "This Player does not support set_frames() (internal callback missing)."
+            )
         self._set_frames_callback(frames, start)
         if reset:
             self.reset()
@@ -177,7 +181,9 @@ class ChunkedPlayer:
     def reseed(self) -> None:
         """Pause, clear buffers, reset animator, and regenerate the current chunk."""
         if self._reseed_callback is None:
-            raise RuntimeError("This ChunkedPlayer does not support reseed() (internal callback missing).")
+            raise RuntimeError(
+                "This ChunkedPlayer does not support reseed() (internal callback missing)."
+            )
         self._reseed_callback()
 
     def rechunk(self, *, reset_state: bool = False) -> None:
@@ -191,7 +197,9 @@ class ChunkedPlayer:
             buffered frames from "now".
         """
         if self._rechunk_callback is None:
-            raise RuntimeError("This ChunkedPlayer does not support rechunk() (internal callback missing).")
+            raise RuntimeError(
+                "This ChunkedPlayer does not support rechunk() (internal callback missing)."
+            )
         self._rechunk_callback(bool(reset_state))
 
 
@@ -302,24 +310,6 @@ def _make_extent(camera_bounds: Bounds) -> K3DLine:
         opacity=0.0,
         shader="simple",
     )
-
-
-def make_dark_plot(**kwargs: Any) -> K3DPlot:
-    """Convenience: create a k3d plot with dark-theme defaults.
-
-    Users can override any default by passing the same keyword in kwargs.
-    """
-
-    defaults = dict(
-        height=600,
-        background_color=0x1E1E1E,
-        grid_color=0xD2D2D2,
-        label_color=0xF0F0F0,
-        grid_visible=True,
-        axes=["x", "y", "z"],
-    )
-    defaults.update(kwargs)
-    return cast(Callable[..., K3DPlot], k3d.plot)(**defaults)
 
 
 def set_camera_overhead(
@@ -442,7 +432,11 @@ def translate_camera_to_bounds_center(plot: K3DPlot, *, camera_bounds: Bounds) -
     pos = np.asarray(cam[0:3], dtype=float)
     target = np.asarray(cam[3:6], dtype=float)
     up = np.asarray(cam[6:9], dtype=float)
-    if not (np.all(np.isfinite(pos)) and np.all(np.isfinite(target)) and np.all(np.isfinite(up))):
+    if not (
+        np.all(np.isfinite(pos))
+        and np.all(np.isfinite(target))
+        and np.all(np.isfinite(up))
+    ):
         return False
 
     view = target - pos
@@ -451,7 +445,9 @@ def translate_camera_to_bounds_center(plot: K3DPlot, *, camera_bounds: Bounds) -
         return False
 
     xmin, ymin, zmin, xmax, ymax, zmax = map(float, camera_bounds)
-    center = np.array([(xmin + xmax) / 2.0, (ymin + ymax) / 2.0, (zmin + zmax) / 2.0], dtype=float)
+    center = np.array(
+        [(xmin + xmax) / 2.0, (ymin + ymax) / 2.0, (zmin + zmax) / 2.0], dtype=float
+    )
 
     # Abort if the center is behind the camera (facing away).
     if float(np.dot(center - pos, view)) <= 0.0:
@@ -521,7 +517,9 @@ def make_player(
     nframes = _validate_frames(frames)
     if render_fn is None:
         if not bindings:
-            raise ValueError("Either render_fn must be provided, or bindings must be a non-empty list.")
+            raise ValueError(
+                "Either render_fn must be provided, or bindings must be a non-empty list."
+            )
         for b in bindings:
             if b.key not in frames:
                 raise ValueError(f"FrameBinding key not found in frames: {b.key!r}")
@@ -550,7 +548,11 @@ def make_player(
     widgets.jslink((play, "value"), (slider, "value"))
 
     reset_button = widgets.Button(description="Reset", icon="refresh")
-    recenter_button = widgets.Button(description="Recenter", icon="crosshairs", tooltip="Translate camera to bounds center")
+    recenter_button = widgets.Button(
+        description="Recenter",
+        icon="crosshairs",
+        tooltip="Translate camera to bounds center",
+    )
     title_widget = widgets.HTML(f"<b>{title}</b>")
     camera_msg = widgets.HTML("")
 
@@ -612,9 +614,13 @@ def make_player(
         lambda _: (
             camera_msg.__setattr__(
                 "value",
-                ""
-                if translate_camera_to_bounds_center(plot, camera_bounds=camera_bounds)
-                else "<span style='color:#ffa657'>Recenter aborted (camera invalid or facing away).</span>",
+                (
+                    ""
+                    if translate_camera_to_bounds_center(
+                        plot, camera_bounds=camera_bounds
+                    )
+                    else "<span style='color:#ffa657'>Recenter aborted (camera invalid or facing away).</span>"
+                ),
             )
         )
     )
@@ -633,7 +639,9 @@ def make_player(
         _set_frames_callback=None,
     )
 
-    def _set_frames(new_frames: Dict[str, Sequence[Any]], *, start: int | None = None) -> None:
+    def _set_frames(
+        new_frames: Dict[str, Sequence[Any]], *, start: int | None = None
+    ) -> None:
         new_n = _validate_frames(new_frames)
         frames_ref["frames"] = new_frames
 
@@ -724,7 +732,11 @@ def make_stateful_player(
         tooltip="Play / pause animation",
     )
     reset_button = widgets.Button(description="Reset", icon="refresh")
-    recenter_button = widgets.Button(description="Recenter", icon="crosshairs", tooltip="Translate camera to bounds center")
+    recenter_button = widgets.Button(
+        description="Recenter",
+        icon="crosshairs",
+        tooltip="Translate camera to bounds center",
+    )
     status_widget = widgets.HTML("<span>Paused</span>")
     camera_msg = widgets.HTML("")
     error_banner, traceback_accordion, trace_output = _make_error_widgets()
@@ -906,15 +918,21 @@ def make_stateful_player(
         lambda _: (
             camera_msg.__setattr__(
                 "value",
-                ""
-                if translate_camera_to_bounds_center(plot, camera_bounds=camera_bounds)
-                else "<span style='color:#ffa657'>Recenter aborted (camera invalid or facing away).</span>",
+                (
+                    ""
+                    if translate_camera_to_bounds_center(
+                        plot, camera_bounds=camera_bounds
+                    )
+                    else "<span style='color:#ffa657'>Recenter aborted (camera invalid or facing away).</span>"
+                ),
             )
         )
     )
 
     controls = widgets.HBox([play_toggle, reset_button, recenter_button, status_widget])
-    ui = widgets.VBox([title_widget, controls, camera_msg, error_banner, traceback_accordion])
+    ui = widgets.VBox(
+        [title_widget, controls, camera_msg, error_banner, traceback_accordion]
+    )
 
     player = StatefulPlayer(
         ui=ui,
@@ -987,7 +1005,9 @@ def make_chunked_player(
 
     keys = [b.key for b in bindings]
     if len(set(keys)) != len(keys):
-        raise ValueError("FrameBinding.key values must be unique for make_chunked_player")
+        raise ValueError(
+            "FrameBinding.key values must be unique for make_chunked_player"
+        )
 
     chunk_nframes = max(2, int(round(chunk_seconds / dt)))
     play_dt = 1.0 / target_fps
