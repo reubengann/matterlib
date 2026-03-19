@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, cast
 from types import ModuleType
 from sympy.core.relational import Equality
-from sympy.physics.units import convert_to
+from sympy.physics.units import Quantity, convert_to, mol
 import sympy.physics.units as units
 
 
@@ -188,6 +188,12 @@ class _UnitsNamespace:
 
     def __init__(self, module: ModuleType):
         self._module = module
+        kmol = Quantity("kilomole", abbrev="kmol")
+        kmol.set_global_relative_scale_factor(1000, mol)
+        self._aliases: dict[str, Any] = {
+            "kmol": kmol,
+            "kilomole": kmol,
+        }
 
     def __call__(self, names: str):
         tokens = [token for token in names.split() if token]
@@ -199,6 +205,8 @@ class _UnitsNamespace:
         return tuple(resolved)
 
     def _resolve_unit(self, name: str):
+        if name in self._aliases:
+            return self._aliases[name]
         try:
             return getattr(self._module, name)
         except AttributeError as err:
