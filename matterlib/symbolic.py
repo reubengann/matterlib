@@ -253,6 +253,8 @@ class _SympyPhys:
         self.units = _UnitsNamespace(units)
         self.Derivative = sp.Derivative
         self.lambdify = sp.lambdify
+        self.Function = sp.Function
+        self.diff = sp.diff
 
     def Eq(self, lhs: sp.Expr, rhs: sp.Expr, **kwargs: Any) -> Equation:
         return Equation(cast(Equality, sp.Eq(lhs, rhs, **kwargs)))
@@ -270,7 +272,9 @@ class _SympyPhys:
         raw = eq.eq if isinstance(eq, Equation) else eq
         return Equation(convert_eq(raw, target_units))
 
-    def subs_rhs(self, eq: Equality | Equation, replacements: dict[Any, Any]) -> Equation:
+    def subs_rhs(
+        self, eq: Equality | Equation, replacements: dict[Any, Any]
+    ) -> Equation:
         raw = eq.eq if isinstance(eq, Equation) else eq
         return Equation(subs_rhs(raw, replacements))
 
@@ -282,9 +286,7 @@ class _SympyPhys:
         decimal: bool = True,
         sigfigs: int | None = None,
     ) -> sp.Expr:
-        return eval_constant(
-            constant, target_units, decimal=decimal, sigfigs=sigfigs
-        )
+        return eval_constant(constant, target_units, decimal=decimal, sigfigs=sigfigs)
 
     def solve_system(self, eqs, vars):
         raw = [e.eq if isinstance(e, Equation) else e for e in eqs]
