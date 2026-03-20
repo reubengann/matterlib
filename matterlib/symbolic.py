@@ -50,13 +50,33 @@ def normalize_units(
     return cast(Equality, sp.Eq(eq.lhs, coeff * units))
 
 
-def substitute_rhs(eq: Equality, symbol: sp.Symbol, replacement: sp.Expr) -> Equality:
-    return cast(Equality, sp.Eq(eq.lhs, eq.rhs.subs(symbol, replacement)))
+def subs_rhs(eq: Equality, replacements: dict[Any, Any]) -> Equality:
+    return cast(Equality, sp.Eq(eq.lhs, eq.rhs.subs(replacements)))
 
 
 def convert_eq(eq: Equality, target_units: sp.Expr) -> Equality:
     """Convert the RHS of an equation to target_units."""
     return cast(Equality, sp.Eq(eq.lhs, convert_to(eq.rhs, target_units)))
+
+
+def eval_constant(
+    constant: sp.Expr,
+    target_units: sp.Expr,
+    decimal: bool = True,
+    sigfigs: int | None = None,
+) -> sp.Expr:
+    """
+    Evaluate a symbolic physical constant in explicit target units.
+
+    Example:
+        eval_constant(molar_gas_constant, joule/(kelvin*kilomole))
+    """
+    value = convert_to(constant, target_units)
+    if decimal:
+        value = value.evalf()
+    if sigfigs is not None:
+        value = _round_sig(cast(sp.Expr, value), sigfigs)
+    return cast(sp.Expr, value)
 
 
 @dataclass(frozen=True)
@@ -98,6 +118,9 @@ class Equation:
             )
         )
 
+    def subs_rhs(self, replacements: dict[Any, Any]) -> "Equation":
+        return Equation(subs_rhs(self.eq, replacements))
+
     def map(self, f: Callable[[sp.Expr], sp.Expr]) -> "Equation":
         return Equation(cast(Equality, sp.Eq(f(self.lhs), f(self.rhs))))
 
@@ -126,7 +149,7 @@ class Equation:
         rhs = sp.diff(self.rhs, var)
         if simplify_result:
             rhs = sp.simplify(rhs)
-        return Equation(sp.Eq(sp.Derivative(self.lhs, var), rhs))
+        return Equation(cast(Equality, sp.Eq(sp.Derivative(self.lhs, var), rhs)))
 
     def normalize_units(
         self, decimal: bool = True, sigfigs: int | None = None
@@ -246,6 +269,22 @@ class _SympyPhys:
     def convert_to(self, eq: Equality | Equation, target_units: sp.Expr) -> Equation:
         raw = eq.eq if isinstance(eq, Equation) else eq
         return Equation(convert_eq(raw, target_units))
+
+    def subs_rhs(self, eq: Equality | Equation, replacements: dict[Any, Any]) -> Equation:
+        raw = eq.eq if isinstance(eq, Equation) else eq
+        return Equation(subs_rhs(raw, replacements))
+
+    # This is a hack to get things like the molar gas constant to stop being symbolic.
+    def eval_constant(
+        self,
+        constant: sp.Expr,
+        target_units: sp.Expr,
+        decimal: bool = True,
+        sigfigs: int | None = None,
+    ) -> sp.Expr:
+        return eval_constant(
+            constant, target_units, decimal=decimal, sigfigs=sigfigs
+        )
 
     def solve_system(self, eqs, vars):
         raw = [e.eq if isinstance(e, Equation) else e for e in eqs]
