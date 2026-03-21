@@ -65,7 +65,9 @@ class ConstrainedPartial(sp.Expr):
                 f"partial({printer.doprint(self.dependent)}, "
                 f"{printer.doprint(self.wrt)}, hold=({hold_str}))"
             )
-        return f"partial({printer.doprint(self.dependent)}, {printer.doprint(self.wrt)})"
+        return (
+            f"partial({printer.doprint(self.dependent)}, {printer.doprint(self.wrt)})"
+        )
 
 
 def constrained_partial(dependent, wrt, hold=None) -> ConstrainedPartial:
@@ -148,6 +150,9 @@ def eval_constant(
 class Equation:
     eq: Equality
 
+    def _new(self, eq: Equality) -> "Equation":
+        return Equation(eq)
+
     @property
     def lhs(self) -> sp.Expr:
         return cast(sp.Expr, self.eq.lhs)
@@ -164,19 +169,19 @@ class Equation:
         if len(sol) != 1 and root is None:
             raise ValueError(f"Expected one solution for {var}, got {sol}")
         root = root or 0
-        return Equation(cast(Equality, sp.Eq(var, sol[root])))
+        return self._new(cast(Equality, sp.Eq(var, sol[root])))
 
     def solve_for_all(self, var):
         sol = sp.solve(self.eq, var)
         if not sol:
             raise ValueError(f"No solution found for {var}")
-        return [Equation(cast(Equality, sp.Eq(var, s))) for s in sol]
+        return [self._new(cast(Equality, sp.Eq(var, s))) for s in sol]
 
     def subs(self, *args: Any, **kwargs: Any) -> "Equation":
-        return Equation(cast(Equality, self.eq.subs(*args, **kwargs)))
+        return self._new(cast(Equality, self.eq.subs(*args, **kwargs)))
 
     def replace(self, replacements: dict[Any, Any]) -> "Equation":
-        return Equation(
+        return self._new(
             cast(
                 Equality,
                 sp.Eq(self.lhs.subs(replacements), self.rhs.subs(replacements)),
@@ -184,10 +189,10 @@ class Equation:
         )
 
     def subs_rhs(self, replacements: dict[Any, Any]) -> "Equation":
-        return Equation(subs_rhs(self.eq, replacements))
+        return self._new(subs_rhs(self.eq, replacements))
 
     def map(self, f: Callable[[sp.Expr], sp.Expr]) -> "Equation":
-        return Equation(cast(Equality, sp.Eq(f(self.lhs), f(self.rhs))))
+        return self._new(cast(Equality, sp.Eq(f(self.lhs), f(self.rhs))))
 
     def simplify(self) -> "Equation":
         return self.map(sp.simplify)
@@ -205,7 +210,7 @@ class Equation:
         return self.map(lambda s: sp.collect(s, *args, **kwargs))
 
     def convert_to(self, target_units: sp.Expr) -> "Equation":
-        return Equation(convert_eq(self.eq, target_units))
+        return self._new(convert_eq(self.eq, target_units))
 
     def as_dict(self):
         return {self.lhs: self.rhs}
@@ -214,7 +219,7 @@ class Equation:
         rhs = sp.diff(self.rhs, var)
         if simplify_result:
             rhs = sp.simplify(rhs)
-        return Equation(cast(Equality, sp.Eq(sp.Derivative(self.lhs, var), rhs)))
+        return self._new(cast(Equality, sp.Eq(sp.Derivative(self.lhs, var), rhs)))
 
     def diff_implicit(
         self,
@@ -227,19 +232,19 @@ class Equation:
         dependent_expr = cast(sp.Expr, sp.sympify(dependent))
         hold_variables = _normalize_hold_variables(hold)
         if wrt_expr in hold_variables:
-            raise ValueError(f"Cannot differentiate with respect to held variable {wrt_expr}")
+            raise ValueError(
+                f"Cannot differentiate with respect to held variable {wrt_expr}"
+            )
 
         residual = self.lhs - self.rhs
-        constrained = constrained_partial(
-            dependent_expr, wrt_expr, hold=hold_variables
-        )
+        constrained = constrained_partial(dependent_expr, wrt_expr, hold=hold_variables)
         differentiated = (
             sp.diff(residual, wrt_expr)
             + sp.diff(residual, dependent_expr) * constrained
         )
         if simplify_result:
             differentiated = sp.simplify(differentiated)
-        return Equation(cast(Equality, sp.Eq(differentiated, sp.Integer(0))))
+        return self._new(cast(Equality, sp.Eq(differentiated, sp.Integer(0))))
 
     def partial_for(
         self,
@@ -266,12 +271,12 @@ class Equation:
         rhs = sol[root]
         if simplify_result:
             rhs = sp.simplify(rhs)
-        return Equation(cast(Equality, sp.Eq(target, rhs)))
+        return self._new(cast(Equality, sp.Eq(target, rhs)))
 
     def normalize_units(
         self, decimal: bool = True, sigfigs: int | None = None
     ) -> "Equation":
-        return Equation(normalize_units(self.eq, decimal=decimal, sigfigs=sigfigs))
+        return self._new(normalize_units(self.eq, decimal=decimal, sigfigs=sigfigs))
 
     def apply(
         self, expr: sp.Expr, op: Callable[[sp.Expr, sp.Expr], sp.Expr]
@@ -280,28 +285,28 @@ class Equation:
 
     def __add__(self, other) -> "Equation":
         if isinstance(other, Equation):
-            return Equation(
+            return self._new(
                 cast(Equality, sp.Eq(self.lhs + other.lhs, self.rhs + other.rhs))
             )
         return self.map(lambda s: s + other)
 
     def __sub__(self, other) -> "Equation":
         if isinstance(other, Equation):
-            return Equation(
+            return self._new(
                 cast(Equality, sp.Eq(self.lhs - other.lhs, self.rhs - other.rhs))
             )
         return self.map(lambda s: s - other)
 
     def __mul__(self, other) -> "Equation":
         if isinstance(other, Equation):
-            return Equation(
+            return self._new(
                 cast(Equality, sp.Eq(self.lhs * other.lhs, self.rhs * other.rhs))
             )
         return self.map(lambda s: s * other)
 
     def __truediv__(self, other) -> "Equation":
         if isinstance(other, Equation):
-            return Equation(
+            return self._new(
                 cast(Equality, sp.Eq(self.lhs / other.lhs, self.rhs / other.rhs))
             )
         return self.map(lambda s: s / other)
@@ -319,13 +324,15 @@ class Equation:
         return self.eq._repr_latex_()
 
     def with_state(self, *state_variables) -> "StateEquation":
-        return StateEquation(self, state_variables)
+        return StateEquation(self.eq, state_variables)
 
 
 @dataclass(frozen=True)
-class StateEquation:
-    equation: Equation
+class StateEquation(Equation):
     state_variables: tuple[Any, ...]
+
+    def _new(self, eq: Equality) -> "StateEquation":
+        return StateEquation(eq, self.state_variables)
 
     def _normalized_state_variables(self) -> tuple[sp.Expr, ...]:
         if not self.state_variables:
@@ -349,7 +356,9 @@ class StateEquation:
                 )
 
         remaining = [
-            var for var in state_variables if var != wrt_expr and var not in hold_variables
+            var
+            for var in state_variables
+            if var != wrt_expr and var not in hold_variables
         ]
         if len(remaining) != 1:
             raise ValueError(
@@ -364,17 +373,20 @@ class StateEquation:
         hold=None,
         dependent=None,
         simplify_result: bool = True,
-    ) -> Equation:
+    ) -> "StateEquation":
         dependent_expr = (
             cast(sp.Expr, sp.sympify(dependent))
             if dependent is not None
             else self._infer_dependent(wrt=wrt, hold=hold)
         )
-        return self.equation.diff_implicit(
-            wrt=wrt,
-            dependent=dependent_expr,
-            hold=hold,
-            simplify_result=simplify_result,
+        return cast(
+            "StateEquation",
+            super().diff_implicit(
+                wrt=wrt,
+                dependent=dependent_expr,
+                hold=hold,
+                simplify_result=simplify_result,
+            ),
         )
 
     def partial_for(
@@ -384,51 +396,28 @@ class StateEquation:
         dependent=None,
         simplify_result: bool = True,
         root=None,
-    ) -> Equation:
+    ) -> "StateEquation":
         dependent_expr = (
             cast(sp.Expr, sp.sympify(dependent))
             if dependent is not None
             else self._infer_dependent(wrt=wrt, hold=hold)
         )
-        return self.equation.partial_for(
-            dependent=dependent_expr,
-            wrt=wrt,
-            hold=hold,
-            simplify_result=simplify_result,
-            root=root,
+        return cast(
+            "StateEquation",
+            super().partial_for(
+                dependent=dependent_expr,
+                wrt=wrt,
+                hold=hold,
+                simplify_result=simplify_result,
+                root=root,
+            ),
         )
 
-    def solve_for(self, var, root=None):
-        return self._wrap_result(self.equation.solve_for(var, root=root))
-
-    def solve_for_all(self, var):
-        return self._wrap_result(self.equation.solve_for_all(var))
-
-    def _wrap_result(self, value):
-        if isinstance(value, Equation):
-            return StateEquation(value, self.state_variables)
-        if isinstance(value, list):
-            return [self._wrap_result(item) for item in value]
-        return value
-
-    def __getattr__(self, name: str):
-        attr = getattr(self.equation, name)
-        if callable(attr):
-            def wrapped(*args, **kwargs):
-                return self._wrap_result(attr(*args, **kwargs))
-
-            return wrapped
-        return attr
-
-    @property
-    def eq(self) -> Equation:
-        return self.equation
-
     def __repr__(self) -> str:
-        return repr(self.equation)
+        return super().__repr__()
 
     def _repr_latex_(self) -> str:
-        return self.equation._repr_latex_()
+        return super()._repr_latex_()
 
 
 class _UnitsNamespace:
@@ -485,6 +474,14 @@ class _SympyPhys:
         self.Function = sp.Function
         self.diff = sp.diff
         self.ConstrainedPartial = ConstrainedPartial
+        self.exp = sp.exp
+        self.log = sp.log
+        self.sin = sp.sin
+        self.cos = sp.cos
+        self.tan = sp.tan
+        self.asin = sp.asin
+        self.acos = sp.acos
+        self.atan = sp.atan
 
     def Eq(self, lhs: sp.Expr, rhs: sp.Expr, **kwargs: Any) -> Equation:
         return Equation(cast(Equality, sp.Eq(lhs, rhs, **kwargs)))
@@ -521,8 +518,32 @@ class _SympyPhys:
     ) -> sp.Expr:
         return eval_constant(constant, target_units, decimal=decimal, sigfigs=sigfigs)
 
+    def R_kmol(self, decimal: bool = True, sigfigs: int | None = None) -> sp.Expr:
+        """
+        Gas constant evaluated in J/(K*kmol).
+
+        This is a convenience wrapper around eval_constant for notebook ergonomics.
+        """
+        joule, kelvin, kilomole, molar_gas_constant = self.units(
+            "joule kelvin kilomole molar_gas_constant"
+        )
+        target_units = joule / (kelvin * kilomole)
+        return self.eval_constant(
+            molar_gas_constant,
+            target_units,
+            decimal=decimal,
+            sigfigs=sigfigs,
+        )
+
     def solve_system(self, eqs, vars):
-        raw = [e.eq if isinstance(e, Equation) else e for e in eqs]
+        raw = []
+        for e in eqs:
+            if isinstance(e, StateEquation):
+                raw.append(e.eq)
+            elif isinstance(e, Equation):
+                raw.append(e.eq)
+            else:
+                raw.append(e)
         return sp.solve(raw, vars)
 
     def __getattr__(self, name: str) -> Any:

@@ -95,5 +95,44 @@ def test_with_state_preserves_state_on_equation_methods():
 
     assert isinstance(solved, type(state_eq))
     assert solved.state_variables == state_eq.state_variables
+    assert isinstance(rediffed, type(state_eq))
     assert spp.simplify(rediffed.lhs - (spp.partial(v, T, hold=P) - R / P)) == 0
     assert rediffed.rhs == 0
+
+
+def test_with_state_allows_chained_implicit_derivatives():
+    P, R, T, a, b, v = spp.symbols("P R T a b v")
+    eq = spp.Eq((P + a / v**2) * (v - b), R * T).with_state(v, T, P)
+
+    second = eq.solve_for(P).diff_implicit(wrt=v, hold=T).diff_implicit(wrt=v, hold=T)
+
+    assert isinstance(second, type(eq))
+
+
+def test_solve_system_accepts_state_equations():
+    x, y = spp.symbols("x y")
+    eq1 = spp.Eq(x + y, 3).with_state(x, y)
+    eq2 = spp.Eq(x - y, 1).with_state(x, y)
+
+    solutions = spp.solve_system([eq1, eq2], [x, y])
+    assert solutions == {x: 2, y: 1}
+
+
+def test_R_kmol_matches_eval_constant():
+    joule, kilogram, molar_gas_constant, kelvin, kilomole = spp.units(
+        "joule kilogram molar_gas_constant kelvin kilomole"
+    )
+    expected = spp.eval_constant(molar_gas_constant, joule / (kelvin * kilomole))
+    assert spp.simplify(spp.R_kmol() - expected) == 0
+
+
+def test_state_equation_supports_mixed_equation_multiplication():
+    x, y = spp.symbols("x y")
+    state_eq = spp.Eq(x, 2).with_state(x, y)
+    eq = spp.Eq(y, 3)
+
+    product = state_eq * eq
+
+    assert isinstance(product, type(state_eq))
+    assert product.state_variables == state_eq.state_variables
+    assert product.eq == spp.Eq(x * y, 6).eq
