@@ -7,6 +7,71 @@ from sympy.physics.units import Quantity, convert_to, mol
 import sympy.physics.units as units
 
 
+def _normalize_hold_variables(hold) -> tuple[sp.Expr, ...]:
+    if hold is None:
+        return tuple()
+    if isinstance(hold, (tuple, list, set, sp.Tuple)):
+        return tuple(cast(sp.Expr, sp.sympify(x)) for x in hold)
+    return (cast(sp.Expr, sp.sympify(hold)),)
+
+
+class ConstrainedPartial(sp.Expr):
+    """
+    Symbolic thermodynamic constrained partial derivative.
+
+    Represents objects like (∂P/∂v)_T.
+    """
+
+    is_commutative = True
+
+    def __new__(cls, dependent, wrt, hold=None):
+        dependent_sym = cast(sp.Expr, sp.sympify(dependent))
+        wrt_sym = cast(sp.Expr, sp.sympify(wrt))
+        hold_tuple = sp.Tuple(*_normalize_hold_variables(hold))
+        return cast(
+            "ConstrainedPartial",
+            sp.Expr.__new__(cls, dependent_sym, wrt_sym, hold_tuple),
+        )
+
+    @property
+    def dependent(self) -> sp.Expr:
+        return cast(sp.Expr, self.args[0])
+
+    @property
+    def wrt(self) -> sp.Expr:
+        return cast(sp.Expr, self.args[1])
+
+    @property
+    def hold(self) -> tuple[sp.Expr, ...]:
+        hold_tuple = cast(sp.Tuple, self.args[2])
+        return tuple(cast(sp.Expr, item) for item in hold_tuple)
+
+    def _latex(self, printer) -> str:
+        dependent_latex = printer._print(self.dependent)
+        wrt_latex = printer._print(self.wrt)
+        base = (
+            rf"\left(\frac{{\partial {dependent_latex}}}"
+            rf"{{\partial {wrt_latex}}}\right)"
+        )
+        if not self.hold:
+            return base
+        hold_latex = ", ".join(printer._print(symbol) for symbol in self.hold)
+        return rf"{base}_{{{hold_latex}}}"
+
+    def _sympystr(self, printer) -> str:
+        hold_str = ", ".join(printer.doprint(symbol) for symbol in self.hold)
+        if hold_str:
+            return (
+                f"partial({printer.doprint(self.dependent)}, "
+                f"{printer.doprint(self.wrt)}, hold=({hold_str}))"
+            )
+        return f"partial({printer.doprint(self.dependent)}, {printer.doprint(self.wrt)})"
+
+
+def constrained_partial(dependent, wrt, hold=None) -> ConstrainedPartial:
+    return ConstrainedPartial(dependent, wrt, hold=hold)
+
+
 def _round_sig(x: sp.Expr, sig: int) -> sp.Expr:
     """Round a SymPy number to `sig` significant figures."""
     if x == 0:
@@ -151,6 +216,58 @@ class Equation:
             rhs = sp.simplify(rhs)
         return Equation(cast(Equality, sp.Eq(sp.Derivative(self.lhs, var), rhs)))
 
+    def diff_implicit(
+        self,
+        wrt,
+        dependent,
+        hold=None,
+        simplify_result: bool = True,
+    ) -> "Equation":
+        wrt_expr = cast(sp.Expr, sp.sympify(wrt))
+        dependent_expr = cast(sp.Expr, sp.sympify(dependent))
+        hold_variables = _normalize_hold_variables(hold)
+        if wrt_expr in hold_variables:
+            raise ValueError(f"Cannot differentiate with respect to held variable {wrt_expr}")
+
+        residual = self.lhs - self.rhs
+        constrained = constrained_partial(
+            dependent_expr, wrt_expr, hold=hold_variables
+        )
+        differentiated = (
+            sp.diff(residual, wrt_expr)
+            + sp.diff(residual, dependent_expr) * constrained
+        )
+        if simplify_result:
+            differentiated = sp.simplify(differentiated)
+        return Equation(cast(Equality, sp.Eq(differentiated, sp.Integer(0))))
+
+    def partial_for(
+        self,
+        dependent,
+        wrt,
+        hold=None,
+        simplify_result: bool = True,
+        root=None,
+    ) -> "Equation":
+        dependent_expr = cast(sp.Expr, sp.sympify(dependent))
+        wrt_expr = cast(sp.Expr, sp.sympify(wrt))
+        hold_variables = _normalize_hold_variables(hold)
+        target = constrained_partial(dependent_expr, wrt_expr, hold=hold_variables)
+        differentiated = self.diff_implicit(
+            wrt=wrt_expr,
+            dependent=dependent_expr,
+            hold=hold_variables,
+            simplify_result=simplify_result,
+        )
+        sol = sp.solve(differentiated.eq, target)
+        if len(sol) != 1 and root is None:
+            raise ValueError(f"Expected one solution for {target}, got {sol}")
+        root = root or 0
+        rhs = sol[root]
+        if simplify_result:
+            rhs = sp.simplify(rhs)
+        return Equation(cast(Equality, sp.Eq(target, rhs)))
+
     def normalize_units(
         self, decimal: bool = True, sigfigs: int | None = None
     ) -> "Equation":
@@ -200,6 +317,118 @@ class Equation:
 
     def _repr_latex_(self) -> str:
         return self.eq._repr_latex_()
+
+    def with_state(self, *state_variables) -> "StateEquation":
+        return StateEquation(self, state_variables)
+
+
+@dataclass(frozen=True)
+class StateEquation:
+    equation: Equation
+    state_variables: tuple[Any, ...]
+
+    def _normalized_state_variables(self) -> tuple[sp.Expr, ...]:
+        if not self.state_variables:
+            raise ValueError("with_state requires at least one state variable")
+        return tuple(cast(sp.Expr, sp.sympify(var)) for var in self.state_variables)
+
+    def _infer_dependent(self, wrt, hold) -> sp.Expr:
+        wrt_expr = cast(sp.Expr, sp.sympify(wrt))
+        hold_variables = _normalize_hold_variables(hold)
+        state_variables = self._normalized_state_variables()
+
+        if wrt_expr not in state_variables:
+            raise ValueError(
+                f"differentiation variable {wrt_expr} is not in declared state variables "
+                f"{state_variables}"
+            )
+        for held in hold_variables:
+            if held not in state_variables:
+                raise ValueError(
+                    f"held variable {held} is not in declared state variables {state_variables}"
+                )
+
+        remaining = [
+            var for var in state_variables if var != wrt_expr and var not in hold_variables
+        ]
+        if len(remaining) != 1:
+            raise ValueError(
+                "Could not infer dependent variable uniquely; "
+                "provide dependent explicitly."
+            )
+        return remaining[0]
+
+    def diff_implicit(
+        self,
+        wrt,
+        hold=None,
+        dependent=None,
+        simplify_result: bool = True,
+    ) -> Equation:
+        dependent_expr = (
+            cast(sp.Expr, sp.sympify(dependent))
+            if dependent is not None
+            else self._infer_dependent(wrt=wrt, hold=hold)
+        )
+        return self.equation.diff_implicit(
+            wrt=wrt,
+            dependent=dependent_expr,
+            hold=hold,
+            simplify_result=simplify_result,
+        )
+
+    def partial_for(
+        self,
+        wrt,
+        hold=None,
+        dependent=None,
+        simplify_result: bool = True,
+        root=None,
+    ) -> Equation:
+        dependent_expr = (
+            cast(sp.Expr, sp.sympify(dependent))
+            if dependent is not None
+            else self._infer_dependent(wrt=wrt, hold=hold)
+        )
+        return self.equation.partial_for(
+            dependent=dependent_expr,
+            wrt=wrt,
+            hold=hold,
+            simplify_result=simplify_result,
+            root=root,
+        )
+
+    def solve_for(self, var, root=None):
+        return self._wrap_result(self.equation.solve_for(var, root=root))
+
+    def solve_for_all(self, var):
+        return self._wrap_result(self.equation.solve_for_all(var))
+
+    def _wrap_result(self, value):
+        if isinstance(value, Equation):
+            return StateEquation(value, self.state_variables)
+        if isinstance(value, list):
+            return [self._wrap_result(item) for item in value]
+        return value
+
+    def __getattr__(self, name: str):
+        attr = getattr(self.equation, name)
+        if callable(attr):
+            def wrapped(*args, **kwargs):
+                return self._wrap_result(attr(*args, **kwargs))
+
+            return wrapped
+        return attr
+
+    @property
+    def eq(self) -> Equation:
+        return self.equation
+
+    def __repr__(self) -> str:
+        return repr(self.equation)
+
+    def _repr_latex_(self) -> str:
+        return self.equation._repr_latex_()
 
 
 class _UnitsNamespace:
@@ -255,12 +484,16 @@ class _SympyPhys:
         self.lambdify = sp.lambdify
         self.Function = sp.Function
         self.diff = sp.diff
+        self.ConstrainedPartial = ConstrainedPartial
 
     def Eq(self, lhs: sp.Expr, rhs: sp.Expr, **kwargs: Any) -> Equation:
         return Equation(cast(Equality, sp.Eq(lhs, rhs, **kwargs)))
 
     def solve_for(self, expr: Equality | sp.Expr, var: sp.Symbol) -> sp.Expr:
         return solve_for(expr, var)
+
+    def partial(self, dependent, wrt, hold=None) -> ConstrainedPartial:
+        return constrained_partial(dependent, wrt, hold=hold)
 
     def normalize_units(
         self, eq: Equality | Equation, decimal: bool = True, sigfigs: int | None = None

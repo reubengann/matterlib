@@ -10,6 +10,7 @@ readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.9"
 dependencies = [
+  "sympy",
   "k3d>=2.15.0",
   "ipywidgets>=8.0.0",
   "ipycanvas>=0.9.0",
