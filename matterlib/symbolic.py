@@ -138,7 +138,7 @@ def eval_constant(
     """
     value = convert_to(constant, target_units)
     if decimal:
-        value = value.evalf()
+        value = cast(sp.Expr, value).evalf()
     if sigfigs is not None:
         value = _round_sig(cast(sp.Expr, value), sigfigs)
     return cast(sp.Expr, value)
@@ -164,13 +164,13 @@ class Equation:
         if len(sol) != 1 and root is None:
             raise ValueError(f"Expected one solution for {var}, got {sol}")
         root = root or 0
-        return Equation(sp.Eq(var, sol[root]))
+        return Equation(cast(Equality, sp.Eq(var, sol[root])))
 
     def solve_for_all(self, var):
         sol = sp.solve(self.eq, var)
         if not sol:
             raise ValueError(f"No solution found for {var}")
-        return [Equation(sp.Eq(var, s)) for s in sol]
+        return [Equation(cast(Equality, sp.Eq(var, s))) for s in sol]
 
     def subs(self, *args: Any, **kwargs: Any) -> "Equation":
         return Equation(cast(Equality, self.eq.subs(*args, **kwargs)))
