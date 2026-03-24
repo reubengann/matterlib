@@ -236,15 +236,19 @@ class Equation:
                 f"Cannot differentiate with respect to held variable {wrt_expr}"
             )
 
-        residual = self.lhs - self.rhs
         constrained = constrained_partial(dependent_expr, wrt_expr, hold=hold_variables)
-        differentiated = (
-            sp.diff(residual, wrt_expr)
-            + sp.diff(residual, dependent_expr) * constrained
+        lhs_differentiated = (
+            sp.diff(self.lhs, wrt_expr)
+            + sp.diff(self.lhs, dependent_expr) * constrained
+        )
+        rhs_differentiated = (
+            sp.diff(self.rhs, wrt_expr)
+            + sp.diff(self.rhs, dependent_expr) * constrained
         )
         if simplify_result:
-            differentiated = sp.simplify(differentiated)
-        return self._new(cast(Equality, sp.Eq(differentiated, sp.Integer(0))))
+            lhs_differentiated = sp.simplify(lhs_differentiated)
+            rhs_differentiated = sp.simplify(rhs_differentiated)
+        return self._new(cast(Equality, sp.Eq(lhs_differentiated, rhs_differentiated)))
 
     def partial_for(
         self,
@@ -310,6 +314,9 @@ class Equation:
                 cast(Equality, sp.Eq(self.lhs / other.lhs, self.rhs / other.rhs))
             )
         return self.map(lambda s: s / other)
+
+    def __rtruediv__(self, other) -> "Equation":
+        return self.map(lambda s: other / s)
 
     def __pow__(self, other: sp.Expr) -> "Equation":
         return self.map(lambda s: s**other)
@@ -482,6 +489,7 @@ class _SympyPhys:
         self.asin = sp.asin
         self.acos = sp.acos
         self.atan = sp.atan
+        self.Integral = sp.Integral
 
     def Eq(self, lhs: sp.Expr, rhs: sp.Expr, **kwargs: Any) -> Equation:
         return Equation(cast(Equality, sp.Eq(lhs, rhs, **kwargs)))

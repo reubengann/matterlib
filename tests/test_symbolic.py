@@ -12,10 +12,8 @@ def test_diff_implicit_returns_unsolved_equation():
     eq = spp.Eq(P * (v - b), R * T)
 
     differentiated = eq.diff_implicit(wrt=T, dependent=v, hold=P)
-    expected = P * spp.partial(v, T, hold=P) - R
-
-    assert spp.simplify(differentiated.lhs - expected) == 0
-    assert differentiated.rhs == 0
+    assert spp.simplify(differentiated.lhs - (P * spp.partial(v, T, hold=P))) == 0
+    assert spp.simplify(differentiated.rhs - R) == 0
 
 
 def test_partial_for_solves_constrained_derivative():
@@ -50,10 +48,8 @@ def test_with_state_infers_dependent_for_diff():
     eq = spp.Eq(P * (v - b), R * T).with_state(P, v, T)
 
     differentiated = eq.diff_implicit(wrt=T, hold=P)
-    expected = P * spp.partial(v, T, hold=P) - R
-
-    assert spp.simplify(differentiated.lhs - expected) == 0
-    assert differentiated.rhs == 0
+    assert spp.simplify(differentiated.lhs - (P * spp.partial(v, T, hold=P))) == 0
+    assert spp.simplify(differentiated.rhs - R) == 0
 
 
 def test_with_state_infers_dependent_for_partial_for():
@@ -96,8 +92,17 @@ def test_with_state_preserves_state_on_equation_methods():
     assert isinstance(solved, type(state_eq))
     assert solved.state_variables == state_eq.state_variables
     assert isinstance(rediffed, type(state_eq))
-    assert spp.simplify(rediffed.lhs - (spp.partial(v, T, hold=P) - R / P)) == 0
-    assert rediffed.rhs == 0
+    assert spp.simplify(rediffed.lhs - spp.partial(v, T, hold=P)) == 0
+    assert spp.simplify(rediffed.rhs - (R / P)) == 0
+
+
+def test_diff_implicit_preserves_nonzero_rhs_terms():
+    P, v, a, b, R, T = spp.symbols("P v a b R T")
+    eq = spp.Eq(P * (v - b) * spp.exp(a / (v * R * T)), R * T).with_state(P, v, T)
+
+    differentiated = eq.diff_implicit(T, hold=v)
+
+    assert differentiated.rhs == R
 
 
 def test_with_state_allows_chained_implicit_derivatives():
@@ -136,3 +141,11 @@ def test_state_equation_supports_mixed_equation_multiplication():
     assert isinstance(product, type(state_eq))
     assert product.state_variables == state_eq.state_variables
     assert product.eq == spp.Eq(x * y, 6).eq
+
+
+def test_reverse_division_for_equation():
+    x, y = spp.symbols("x y")
+    eq = spp.Eq(x, y)
+
+    result = 1 / eq
+    assert result.eq == spp.Eq(1 / x, 1 / y).eq
