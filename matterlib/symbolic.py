@@ -178,6 +178,12 @@ class Equation:
         return [self._new(cast(Equality, sp.Eq(var, s))) for s in sol]
 
     def subs(self, *args: Any, **kwargs: Any) -> "Equation":
+        if len(args) == 1 and not kwargs:
+            replacement = args[0]
+            if isinstance(replacement, Equation):
+                args = (replacement.as_dict(),)
+            elif isinstance(replacement, Equality):
+                args = ({replacement.lhs: replacement.rhs},)
         return self._new(cast(Equality, self.eq.subs(*args, **kwargs)))
 
     def replace(self, replacements: dict[Any, Any]) -> "Equation":
@@ -196,6 +202,12 @@ class Equation:
 
     def simplify(self) -> "Equation":
         return self.map(sp.simplify)
+
+    def evalf(self, *args: Any, **kwargs: Any) -> "Equation":
+        return self.map(lambda s: cast(sp.Expr, s.evalf(*args, **kwargs)))
+
+    def reverse_sides(self) -> "Equation":
+        return self._new(cast(Equality, sp.Eq(self.rhs, self.lhs)))
 
     def expand(self) -> "Equation":
         return self.map(sp.expand)

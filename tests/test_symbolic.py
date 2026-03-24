@@ -149,3 +149,25 @@ def test_reverse_division_for_equation():
 
     result = 1 / eq
     assert result.eq == spp.Eq(1 / x, 1 / y).eq
+
+
+def test_equation_evalf_shortcut():
+    x = spp.symbols("x")
+    eq = spp.Eq(x, spp.pi / 2)
+
+    result = eq.evalf(6)
+
+    assert result.lhs == x
+    assert result.rhs == spp.N(spp.pi / 2, 6)
+
+
+def test_subs_accepts_equation_directly():
+    P, V, R, T = spp.symbols("P V R T")
+    ideal_gas = spp.Eq(P * V, R * T)
+    work_expr = spp.Eq(P + 1, 0)
+
+    result = work_expr.subs(ideal_gas.solve_for(P))
+    expected = spp.Eq(R * T / V + 1, 0)
+
+    assert spp.simplify(result.lhs - expected.lhs) == 0
+    assert result.rhs == expected.rhs
