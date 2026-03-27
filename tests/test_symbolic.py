@@ -1,3 +1,7 @@
+import numpy as np
+import pytest
+from sympy.physics.units import convert_to
+
 from matterlib import spp
 
 
@@ -171,3 +175,58 @@ def test_subs_accepts_equation_directly():
 
     assert spp.simplify(result.lhs - expected.lhs) == 0
     assert result.rhs == expected.rhs
+
+
+def test_lambdify_units_ideal_gas_vectorized_pressure():
+    P, R, T, V, n = spp.symbols("P R T V n")
+    kelvin, kilomole, meter, pascal = spp.units("kelvin kilomole meter pascal")
+    pressure_expr = spp.Eq(P * V, R * T * n).solve_for(P).rhs.subs(
+        {R: spp.R_kmol(), T: 300 * kelvin, n: 0.25 * kilomole}
+    )
+
+    pressure_fn = spp.lambdify_units(
+        V,
+        pressure_expr,
+        inputs={V: meter**3},
+        output=pascal,
+        modules="numpy",
+    )
+
+    volumes = np.array([10.0, 8.0, 5.0])
+    pressures = pressure_fn(volumes)
+
+    expected = np.array(
+        [
+            float(
+                spp.N(
+                    convert_to(pressure_expr.subs({V: volume * meter**3}), pascal) / pascal
+                )
+            )
+            for volume in volumes
+        ]
+    )
+    np.testing.assert_allclose(pressures, expected)
+    assert pressure_fn(10.0) == pytest.approx(expected[0])
+
+
+def test_lambdify_units_respects_argument_order():
+    x, y = spp.symbols("x y")
+    meter = spp.units("meter")
+
+    fn = spp.lambdify_units(
+        (x, y),
+        x + 2 * y,
+        inputs={x: meter, y: meter},
+        output=meter,
+        modules="numpy",
+    )
+
+    assert fn(3.0, 4.0) == 11.0
+
+
+def test_lambdify_units_requires_units_for_all_arguments():
+    x, y = spp.symbols("x y")
+    meter = spp.units("meter")
+
+    with pytest.raises(ValueError, match="Missing unit declarations"):
+        spp.lambdify_units((x, y), x + y, inputs={x: meter}, output=meter)

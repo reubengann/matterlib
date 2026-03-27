@@ -15,6 +15,16 @@ def _normalize_hold_variables(hold) -> tuple[sp.Expr, ...]:
     return (cast(sp.Expr, sp.sympify(hold)),)
 
 
+def _normalize_lambdify_args(args: Any) -> tuple[sp.Expr, ...]:
+    if isinstance(args, (tuple, list, sp.Tuple)):
+        normalized = tuple(cast(sp.Expr, sp.sympify(arg)) for arg in args)
+    else:
+        normalized = (cast(sp.Expr, sp.sympify(args)),)
+    if not normalized:
+        raise ValueError("No lambdify arguments provided.")
+    return normalized
+
+
 class ConstrainedPartial(sp.Expr):
     """
     Symbolic thermodynamic constrained partial derivative.
@@ -511,6 +521,28 @@ class _SympyPhys:
 
     def partial(self, dependent, wrt, hold=None) -> ConstrainedPartial:
         return constrained_partial(dependent, wrt, hold=hold)
+
+    def lambdify_units(
+        self,
+        args: Any,
+        expr: sp.Expr,
+        *,
+        inputs: dict[Any, sp.Expr],
+        output: sp.Expr,
+        modules: Any = "numpy",
+    ):
+        arg_tuple = _normalize_lambdify_args(args)
+        missing = [arg for arg in arg_tuple if arg not in inputs]
+        if missing:
+            missing_names = ", ".join(str(arg) for arg in missing)
+            raise ValueError(f"Missing unit declarations for arguments: {missing_names}")
+
+        substitutions = {arg: arg * inputs[arg] for arg in arg_tuple}
+        replacements = cast(dict[Any, Any], substitutions)
+        expr_with_units = cast(sp.Expr, sp.sympify(expr).subs(replacements))
+        converted = cast(sp.Expr, convert_to(expr_with_units, output))
+        unitless_expr = cast(sp.Expr, sp.simplify(converted / output))
+        return sp.lambdify(args, unitless_expr, modules=modules)
 
     def normalize_units(
         self, eq: Equality | Equation, decimal: bool = True, sigfigs: int | None = None
