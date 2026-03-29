@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 from sympy.physics.units import convert_to
+from sympy.physics.units import Quantity
 
 from matterlib import spp
 
@@ -230,3 +231,45 @@ def test_lambdify_units_requires_units_for_all_arguments():
 
     with pytest.raises(ValueError, match="Missing unit declarations"):
         spp.lambdify_units((x, y), x + y, inputs={x: meter}, output=meter)
+
+
+def test_lambdify_units_handles_nested_units_inside_sqrt():
+    power, t, m, a, b, T, Tprime, T_1 = spp.symbols("P t m a b T Tprime T_1")
+    eq1 = spp.Eq(power * t, spp.Integral((1 / m) * (a + b * Tprime), (Tprime, T_1, T)))
+    eq2 = eq1.simplify().solve_for_all(T)[1]
+    joule, kilogram, kelvin, watt, second = spp.units("joule kilogram kelvin watt second")
+    eq3 = eq2.subs(
+        {
+            a: 750 * joule / (kilogram * kelvin),
+            b: 0.5 * joule / (kilogram * kelvin**2),
+            T_1: 300 * kelvin,
+            power: 1 * watt,
+            m: 0.01 * kilogram,
+        }
+    )
+
+    fn = spp.lambdify_units(
+        t,
+        eq3.rhs,
+        inputs={t: second},
+        output=kelvin,
+        modules="numpy",
+    )
+
+    ts = np.linspace(0, 5, 6)
+    temperatures = fn(ts)
+    converted_unitless = spp.simplify(convert_to(eq3.rhs.subs({t: t * second}), kelvin) / kelvin)
+    for _ in range(8):
+        quantities = converted_unitless.atoms(Quantity)
+        if not quantities:
+            break
+        converted_unitless = spp.simplify(
+            converted_unitless.xreplace(
+                {quantity: spp.sympify(quantity.scale_factor) for quantity in quantities}
+            )
+        )
+    expected = np.array(
+        [float(spp.N(converted_unitless.subs({t: time_s}))) for time_s in ts]
+    )
+
+    np.testing.assert_allclose(temperatures, expected)

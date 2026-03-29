@@ -25,6 +25,32 @@ def _normalize_lambdify_args(args: Any) -> tuple[sp.Expr, ...]:
     return normalized
 
 
+def _replace_quantities_with_scale_factors(
+    expr: sp.Expr, max_passes: int = 8
+) -> sp.Expr:
+    """
+    Replace unit quantities with scale factors until no quantities remain.
+
+    SymPy's unit conversion can leave Quantity atoms inside nested expressions
+    (for example under sqrt). Those atoms are not NumPy-callable, so we strip
+    them by repeatedly substituting each Quantity with its scale_factor.
+    """
+    reduced = cast(sp.Expr, sp.sympify(expr))
+    for _ in range(max_passes):
+        quantities = reduced.atoms(Quantity)
+        if not quantities:
+            break
+        substitutions = {
+            quantity: cast(sp.Expr, sp.sympify(quantity.scale_factor))
+            for quantity in quantities
+        }
+        next_reduced = cast(sp.Expr, reduced.xreplace(substitutions))
+        if next_reduced == reduced:
+            break
+        reduced = cast(sp.Expr, sp.simplify(next_reduced))
+    return reduced
+
+
 class ConstrainedPartial(sp.Expr):
     """
     Symbolic thermodynamic constrained partial derivative.
@@ -542,6 +568,7 @@ class _SympyPhys:
         expr_with_units = cast(sp.Expr, sp.sympify(expr).subs(replacements))
         converted = cast(sp.Expr, convert_to(expr_with_units, output))
         unitless_expr = cast(sp.Expr, sp.simplify(converted / output))
+        unitless_expr = _replace_quantities_with_scale_factors(unitless_expr)
         return sp.lambdify(args, unitless_expr, modules=modules)
 
     def normalize_units(
