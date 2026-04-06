@@ -51,6 +51,25 @@ def _replace_quantities_with_scale_factors(
     return reduced
 
 
+def _freeze_constrained_partials(
+    eq: Equality,
+) -> tuple[Equality, dict[sp.Dummy, "ConstrainedPartial"]]:
+    partials = sorted(
+        cast(set[ConstrainedPartial], eq.atoms(ConstrainedPartial)),
+        key=lambda item: item.sort_key(),
+    )
+    if not partials:
+        return eq, {}
+    frozen_map = {
+        partial: sp.Dummy(f"_cp_{index}") for index, partial in enumerate(partials)
+    }
+    thaw_map = {dummy: partial for partial, dummy in frozen_map.items()}
+    frozen_eq = cast(
+        Equality, sp.Eq(eq.lhs.xreplace(frozen_map), eq.rhs.xreplace(frozen_map))
+    )
+    return frozen_eq, thaw_map
+
+
 class ConstrainedPartial(sp.Expr):
     """
     Symbolic thermodynamic constrained partial derivative.
@@ -81,6 +100,40 @@ class ConstrainedPartial(sp.Expr):
     def hold(self) -> tuple[sp.Expr, ...]:
         hold_tuple = cast(sp.Tuple, self.args[2])
         return tuple(cast(sp.Expr, item) for item in hold_tuple)
+
+    def cycle(self) -> sp.Expr:
+        R"""
+        \left(\dfrac{\partial x}{\partial y}\right)_z \left(\dfrac{\partial y}{\partial z}\right)_x \left(\dfrac{\partial z}{\partial x}\right)_y = -1
+        thus
+        \left(\dfrac{\partial x}{\partial y}\right)_z = \frac{-1}{\left(\dfrac{\partial y}{\partial z}\right)_x \left(\dfrac{\partial z}{\partial x}\right)_y}
+        So from one partial derivative, we get the quotient involving the others.
+        """
+        if len(self.hold) != 1:
+            raise ValueError("Cycle identity requires exactly one held variable.")
+        x = self.dependent
+        y = self.wrt
+        z = self.hold[0]
+        return cast(
+            sp.Expr,
+            -sp.Integer(1)
+            / (ConstrainedPartial(y, z, hold=x) * ConstrainedPartial(z, x, hold=y)),
+        )
+
+    def cycle_eqn(self) -> "Equation":
+        return Equation(cast(Equality, sp.Eq(self, self.cycle())))
+
+    def flip(self) -> sp.Expr:
+        R"""
+        \left(\dfrac{\partial V}{\partial P}\right)_T = \frac{1}{\left(\dfrac{\partial P}{\partial V}\right)_T}
+        """
+        return cast(
+            sp.Expr,
+            sp.Integer(1)
+            / ConstrainedPartial(self.wrt, self.dependent, hold=self.hold),
+        )
+
+    def flip_eqn(self) -> "Equation":
+        return Equation(cast(Equality, sp.Eq(self, self.flip())))
 
     def _latex(self, printer) -> str:
         dependent_latex = printer._print(self.dependent)
@@ -214,13 +267,21 @@ class Equation:
         return [self._new(cast(Equality, sp.Eq(var, s))) for s in sol]
 
     def subs(self, *args: Any, **kwargs: Any) -> "Equation":
+        preserve_partials = bool(kwargs.pop("preserve_partials", False))
         if len(args) == 1 and not kwargs:
             replacement = args[0]
             if isinstance(replacement, Equation):
                 args = (replacement.as_dict(),)
             elif isinstance(replacement, Equality):
                 args = ({replacement.lhs: replacement.rhs},)
-        return self._new(cast(Equality, self.eq.subs(*args, **kwargs)))
+        target_eq = self.eq
+        thaw_map: dict[sp.Dummy, ConstrainedPartial] = {}
+        if preserve_partials:
+            target_eq, thaw_map = _freeze_constrained_partials(target_eq)
+        substituted = cast(Equality, target_eq.subs(*args, **kwargs))
+        if thaw_map:
+            substituted = cast(Equality, substituted.xreplace(thaw_map))
+        return self._new(substituted)
 
     def replace(self, replacements: dict[Any, Any]) -> "Equation":
         return self._new(
@@ -342,6 +403,9 @@ class Equation:
             )
         return self.map(lambda s: s + other)
 
+    def __radd__(self, other) -> "Equation":
+        return self.map(lambda s: other + s)
+
     def __sub__(self, other) -> "Equation":
         if isinstance(other, Equation):
             return self._new(
@@ -349,12 +413,18 @@ class Equation:
             )
         return self.map(lambda s: s - other)
 
+    def __rsub__(self, other) -> "Equation":
+        return self.map(lambda s: other - s)
+
     def __mul__(self, other) -> "Equation":
         if isinstance(other, Equation):
             return self._new(
                 cast(Equality, sp.Eq(self.lhs * other.lhs, self.rhs * other.rhs))
             )
         return self.map(lambda s: s * other)
+
+    def __rmul__(self, other) -> "Equation":
+        return self.map(lambda s: other * s)
 
     def __truediv__(self, other) -> "Equation":
         if isinstance(other, Equation):
@@ -561,7 +631,9 @@ class _SympyPhys:
         missing = [arg for arg in arg_tuple if arg not in inputs]
         if missing:
             missing_names = ", ".join(str(arg) for arg in missing)
-            raise ValueError(f"Missing unit declarations for arguments: {missing_names}")
+            raise ValueError(
+                f"Missing unit declarations for arguments: {missing_names}"
+            )
 
         substitutions = {arg: arg * inputs[arg] for arg in arg_tuple}
         replacements = cast(dict[Any, Any], substitutions)

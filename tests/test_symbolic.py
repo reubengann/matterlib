@@ -156,6 +156,30 @@ def test_reverse_division_for_equation():
     assert result.eq == spp.Eq(1 / x, 1 / y).eq
 
 
+def test_reverse_multiplication_for_equation():
+    x, y = spp.symbols("x y")
+    eq = spp.Eq(x, y)
+
+    result = 3 * eq
+    assert result.eq == spp.Eq(3 * x, 3 * y).eq
+
+
+def test_reverse_addition_for_equation():
+    x, y = spp.symbols("x y")
+    eq = spp.Eq(x, y)
+
+    result = 3 + eq
+    assert result.eq == spp.Eq(3 + x, 3 + y).eq
+
+
+def test_reverse_subtraction_for_equation():
+    x, y = spp.symbols("x y")
+    eq = spp.Eq(x, y)
+
+    result = 3 - eq
+    assert result.eq == spp.Eq(3 - x, 3 - y).eq
+
+
 def test_equation_evalf_shortcut():
     x = spp.symbols("x")
     eq = spp.Eq(x, spp.pi / 2)
@@ -176,6 +200,26 @@ def test_subs_accepts_equation_directly():
 
     assert spp.simplify(result.lhs - expected.lhs) == 0
     assert result.rhs == expected.rhs
+
+
+def test_subs_replaces_inside_constrained_partials_by_default():
+    P, v, T = spp.symbols("P v T")
+    eq = spp.Eq(spp.partial(v, T, hold=P) + v, 0)
+
+    replaced = eq.subs({P: 2, v: 3, T: 4})
+    expected = spp.Eq(spp.partial(3, 4, hold=2) + 3, 0)
+
+    assert replaced.eq == expected.eq
+
+
+def test_subs_can_preserve_constrained_partials():
+    P, v, T = spp.symbols("P v T")
+    eq = spp.Eq(spp.partial(v, T, hold=P) + v, 0)
+
+    replaced = eq.subs({P: 2, v: 3, T: 4}, preserve_partials=True)
+    expected = spp.Eq(spp.partial(v, T, hold=P) + 3, 0)
+
+    assert replaced.eq == expected.eq
 
 
 def test_lambdify_units_ideal_gas_vectorized_pressure():
