@@ -215,6 +215,45 @@ def convert_eq(eq: Equality, target_units: sp.Expr) -> Equality:
     return cast(Equality, sp.Eq(eq.lhs, convert_to(eq.rhs, target_units)))
 
 
+def combine_logs_eq(eq: Equality, force: bool = True) -> Equality:
+    """Combine logarithms on both sides of an equation."""
+
+    def combine_expr(expr: sp.Expr) -> sp.Expr:
+        independent, dependent = expr.as_independent(sp.log, as_Add=False)
+        if dependent == 1:
+            combined = cast(sp.Expr, sp.logcombine(expr, force=force))
+        else:
+            combined = cast(
+                sp.Expr,
+                independent * sp.logcombine(cast(sp.Expr, dependent), force=force),
+            )
+
+        # Avoid forms like log(a**(unitful_prefactor)), which are harder to read.
+        # Keep prefactors outside the logarithm when the exponent is non-numeric.
+        return cast(
+            sp.Expr,
+            combined.replace(
+                lambda node: (
+                    isinstance(node, sp.log)
+                    and isinstance(node.args[0], sp.Pow)
+                    and not cast(sp.Expr, node.args[0].exp).is_number
+                ),
+                lambda node: cast(
+                    sp.Expr,
+                    node.args[0].exp * sp.log(node.args[0].base, evaluate=False),
+                ),
+            ),
+        )
+
+    return cast(
+        Equality,
+        sp.Eq(
+            combine_expr(cast(sp.Expr, eq.lhs)),
+            combine_expr(cast(sp.Expr, eq.rhs)),
+        ),
+    )
+
+
 def eval_constant(
     constant: sp.Expr,
     target_units: sp.Expr,
@@ -320,6 +359,9 @@ class Equation:
 
     def convert_to(self, target_units: sp.Expr) -> "Equation":
         return self._new(convert_eq(self.eq, target_units))
+
+    def combine_logs(self, force: bool = True) -> "Equation":
+        return self._new(combine_logs_eq(self.eq, force=force))
 
     def as_dict(self):
         return {self.lhs: self.rhs}
@@ -653,6 +695,11 @@ class _SympyPhys:
         raw = eq.eq if isinstance(eq, Equation) else eq
         return Equation(convert_eq(raw, target_units))
 
+    def combine_logs(self, eq: Equality | Equation, force: bool = True) -> Equation:
+        """For formulas like log(a) + log(b), combine the logs into a single log and move prefactors outside the logarithm."""
+        raw = eq.eq if isinstance(eq, Equation) else eq
+        return Equation(combine_logs_eq(raw, force=force))
+
     def subs_rhs(
         self, eq: Equality | Equation, replacements: dict[Any, Any]
     ) -> Equation:
@@ -685,6 +732,9 @@ class _SympyPhys:
             decimal=decimal,
             sigfigs=sigfigs,
         )
+
+    def Delta_symbol(self, name: str) -> sp.Symbol:
+        return sp.Symbol(Rf"\Delta {name}")
 
     def solve_system(self, eqs, vars):
         raw = []

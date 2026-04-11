@@ -222,6 +222,47 @@ def test_subs_can_preserve_constrained_partials():
     assert replaced.eq == expected.eq
 
 
+def test_combine_logs_equation_method():
+    x, y = spp.symbols("x y")
+    eq = spp.Eq(spp.log(y) - spp.log(x), 0)
+
+    combined = eq.combine_logs()
+    expected = spp.Eq(spp.log(y / x), 0)
+
+    assert combined.eq == expected.eq
+
+
+def test_combine_logs_namespace_helper():
+    x, y = spp.symbols("x y")
+    eq = spp.Eq(spp.log(y) - spp.log(x), 0)
+
+    combined = spp.combine_logs(eq)
+    expected = spp.Eq(spp.log(y / x), 0)
+
+    assert combined.eq == expected.eq
+
+
+def test_combine_logs_preserves_prefactor_outside_log():
+    dS = spp.symbols("dS")
+    joule, kelvin = spp.units("joule kelvin")
+    eq = spp.Eq(
+        dS,
+        spp.log(1.20467337540508 ** (4184 * joule / kelvin)),
+    )
+
+    combined = spp.combine_logs(eq)
+
+    assert combined.lhs == dS
+    assert combined.rhs.has(spp.log)
+    assert not (
+        combined.rhs.func == spp.log
+        and combined.rhs.args
+        and isinstance(combined.rhs.args[0], spp.Pow)
+    )
+    expected = (4184 * joule / kelvin) * spp.log(1.20467337540508, evaluate=False)
+    assert spp.simplify(combined.rhs - expected) == 0
+
+
 def test_lambdify_units_ideal_gas_vectorized_pressure():
     P, R, T, V, n = spp.symbols("P R T V n")
     kelvin, kilomole, meter, pascal = spp.units("kelvin kilomole meter pascal")
