@@ -222,6 +222,23 @@ def test_subs_can_preserve_constrained_partials():
     assert replaced.eq == expected.eq
 
 
+def test_subs_accepts_variadic_replacements():
+    x, y, z = spp.symbols("x y z")
+    eq = spp.Eq(x + y + z, 0)
+
+    result = eq.subs(spp.Eq(x, 1), {y: 2}, spp.Eq(z, 3))
+
+    assert result.eq == spp.Eq(6, 0).eq
+
+
+def test_subs_rejects_non_mapping_non_equation():
+    x, y = spp.symbols("x y")
+    eq = spp.Eq(x + y, 0)
+
+    with pytest.raises(TypeError, match="dict/Equation"):
+        eq.subs((x, 1))
+
+
 def test_combine_logs_equation_method():
     x, y = spp.symbols("x y")
     eq = spp.Eq(spp.log(y) - spp.log(x), 0)
@@ -261,6 +278,37 @@ def test_combine_logs_preserves_prefactor_outside_log():
     )
     expected = (4184 * joule / kelvin) * spp.log(1.20467337540508, evaluate=False)
     assert spp.simplify(combined.rhs - expected) == 0
+
+
+def test_combine_logs_factors_symbolic_log_coefficients():
+    dS, m, T_1, T_2, a, b = spp.symbols("dS m T_1 T_2 a b")
+    eq = spp.Eq(dS, m * (-T_1 * b + T_2 * b - a * spp.log(T_1) + a * spp.log(T_2)))
+
+    combined = spp.combine_logs(eq)
+
+    expected = spp.Eq(dS, m * (-T_1 * b + T_2 * b + a * spp.log(T_2 / T_1)))
+    assert spp.simplify(combined.rhs - expected.rhs) == 0
+    assert str(combined.rhs).count("**a") == 0
+
+
+def test_convert_to_handles_factored_unit_sum_terms():
+    W = spp.symbols("W")
+    atmosphere, meter, joule = spp.units("atmosphere meter joule")
+    rhs = (
+        64
+        * 2 ** spp.Rational(1, 3)
+        * atmosphere
+        * meter**5
+        * (-0.259108664993958 / meter**2 + 3 * 2 ** spp.Rational(2, 3) / (8 * meter**2))
+    )
+    eq = spp.Eq(W, rhs)
+
+    converted = eq.convert_to(joule)
+
+    assert converted.rhs.has(joule)
+    assert not converted.rhs.has(meter)
+    expected = eq.evalf().convert_to(joule).rhs
+    assert float(spp.N(converted.rhs / joule)) == pytest.approx(float(spp.N(expected / joule)))
 
 
 def test_lambdify_units_ideal_gas_vectorized_pressure():

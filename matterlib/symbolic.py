@@ -1,6 +1,6 @@
 import sympy as sp
 from dataclasses import dataclass
-from typing import Any, Callable, cast
+from typing import Any, Callable, Mapping, cast
 from types import ModuleType
 from sympy.core.relational import Equality
 from sympy.physics.units import Quantity, convert_to, mol
@@ -212,11 +212,24 @@ def subs_rhs(eq: Equality, replacements: dict[Any, Any]) -> Equality:
 
 def convert_eq(eq: Equality, target_units: sp.Expr) -> Equality:
     """Convert the RHS of an equation to target_units."""
-    return cast(Equality, sp.Eq(eq.lhs, convert_to(eq.rhs, target_units)))
+    rhs = cast(sp.Expr, sp.cancel(eq.rhs))
+    return cast(Equality, sp.Eq(eq.lhs, convert_to(rhs, target_units)))
 
 
 def combine_logs_eq(eq: Equality, force: bool = True) -> Equality:
     """Combine logarithms on both sides of an equation."""
+
+    def normalize_log_node(node: sp.Expr) -> sp.Expr:
+        if not isinstance(node, sp.log):
+            return node
+        if isinstance(node.args[0], sp.Pow) and not cast(sp.Expr, node.args[0].exp).is_number:
+            return cast(sp.Expr, node.args[0].exp * sp.log(node.args[0].base, evaluate=False))
+        expanded = cast(sp.Expr, sp.expand_log(node, force=force))
+        factored = cast(sp.Expr, sp.factor_terms(expanded))
+        coeff, rest = factored.as_independent(sp.log, as_Add=False)
+        if rest == 1 or not cast(sp.Expr, rest).has(sp.log):
+            return expanded
+        return cast(sp.Expr, coeff * sp.logcombine(cast(sp.Expr, rest), force=force))
 
     def combine_expr(expr: sp.Expr) -> sp.Expr:
         independent, dependent = expr.as_independent(sp.log, as_Add=False)
@@ -228,21 +241,10 @@ def combine_logs_eq(eq: Equality, force: bool = True) -> Equality:
                 independent * sp.logcombine(cast(sp.Expr, dependent), force=force),
             )
 
-        # Avoid forms like log(a**(unitful_prefactor)), which are harder to read.
-        # Keep prefactors outside the logarithm when the exponent is non-numeric.
+        # Normalize nested log forms to keep common multiplicative factors outside.
         return cast(
             sp.Expr,
-            combined.replace(
-                lambda node: (
-                    isinstance(node, sp.log)
-                    and isinstance(node.args[0], sp.Pow)
-                    and not cast(sp.Expr, node.args[0].exp).is_number
-                ),
-                lambda node: cast(
-                    sp.Expr,
-                    node.args[0].exp * sp.log(node.args[0].base, evaluate=False),
-                ),
-            ),
+            combined.replace(lambda node: isinstance(node, sp.log), normalize_log_node),
         )
 
     return cast(
@@ -307,17 +309,31 @@ class Equation:
 
     def subs(self, *args: Any, **kwargs: Any) -> "Equation":
         preserve_partials = bool(kwargs.pop("preserve_partials", False))
-        if len(args) == 1 and not kwargs:
-            replacement = args[0]
+        if kwargs:
+            unexpected = ", ".join(sorted(kwargs.keys()))
+            raise TypeError(
+                "Equation.subs accepts only dict/Equation positional replacements "
+                f"and optional preserve_partials; got unexpected keyword(s): {unexpected}"
+            )
+
+        merged_replacements: dict[Any, Any] = {}
+        for replacement in args:
             if isinstance(replacement, Equation):
-                args = (replacement.as_dict(),)
+                merged_replacements.update(replacement.as_dict())
+            elif isinstance(replacement, Mapping):
+                merged_replacements.update(cast(dict[Any, Any], dict(replacement)))
             elif isinstance(replacement, Equality):
-                args = ({replacement.lhs: replacement.rhs},)
+                merged_replacements.update({replacement.lhs: replacement.rhs})
+            else:
+                raise TypeError(
+                    "Equation.subs accepts only dict/Equation replacements; "
+                    f"got {type(replacement).__name__}"
+                )
         target_eq = self.eq
         thaw_map: dict[sp.Dummy, ConstrainedPartial] = {}
         if preserve_partials:
             target_eq, thaw_map = _freeze_constrained_partials(target_eq)
-        substituted = cast(Equality, target_eq.subs(*args, **kwargs))
+        substituted = cast(Equality, target_eq.subs(merged_replacements))
         if thaw_map:
             substituted = cast(Equality, substituted.xreplace(thaw_map))
         return self._new(substituted)
@@ -696,7 +712,8 @@ class _SympyPhys:
         return Equation(convert_eq(raw, target_units))
 
     def combine_logs(self, eq: Equality | Equation, force: bool = True) -> Equation:
-        """For formulas like log(a) + log(b), combine the logs into a single log and move prefactors outside the logarithm."""
+        """For formulas like log(a) + log(b), combine the logs into a single log and move 
+        prefactors outside the logarithm."""
         raw = eq.eq if isinstance(eq, Equation) else eq
         return Equation(combine_logs_eq(raw, force=force))
 

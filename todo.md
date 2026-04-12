@@ -4,3 +4,5 @@ like a bug. If we evalf() it first, then convert_to(joule), we get joule.
 
 2. `subs` on an equation should probably accept only dict or Equation. And it would be great
 if it were variadic, so I could just do `subs(eq1, eq2, {gamma: 1.2})`
+
+--- not completed ---
