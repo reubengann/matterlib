@@ -4,6 +4,7 @@ from sympy.physics.units import convert_to
 from sympy.physics.units import Quantity
 
 from matterlib import spp
+from matterlib import symbolic as symbolic_mod
 
 
 def test_constrained_partial_latex():
@@ -239,6 +240,33 @@ def test_subs_rejects_non_mapping_non_equation():
         eq.subs((x, 1))
 
 
+def test_subs_rhs_accepts_variadic_replacements():
+    x, y, z = spp.symbols("x y z")
+    eq = spp.Eq(x, y + z)
+
+    result = eq.subs_rhs(spp.Eq(y, 2), {z: 3})
+
+    assert result.eq == spp.Eq(x, 5).eq
+
+
+def test_subs_rhs_can_preserve_constrained_partials():
+    P, v, T = spp.symbols("P v T")
+    eq = spp.Eq(0, spp.partial(v, T, hold=P) + v)
+
+    replaced = eq.subs_rhs({P: 2, v: 3, T: 4}, preserve_partials=True)
+    expected = spp.Eq(0, spp.partial(v, T, hold=P) + 3)
+
+    assert replaced.eq == expected.eq
+
+
+def test_subs_rhs_rejects_non_mapping_non_equation():
+    x, y = spp.symbols("x y")
+    eq = spp.Eq(x, y)
+
+    with pytest.raises(TypeError, match="dict/Equation"):
+        eq.subs_rhs((y, 1))
+
+
 def test_combine_logs_equation_method():
     x, y = spp.symbols("x y")
     eq = spp.Eq(spp.log(y) - spp.log(x), 0)
@@ -309,6 +337,146 @@ def test_convert_to_handles_factored_unit_sum_terms():
     assert not converted.rhs.has(meter)
     expected = eq.evalf().convert_to(joule).rhs
     assert float(spp.N(converted.rhs / joule)) == pytest.approx(float(spp.N(expected / joule)))
+
+
+def test_convert_to_prefers_target_unit_basis_for_pressure_expressions():
+    kelvin, meter, newton, atmosphere, joule = spp.units("kelvin meter newton atmosphere joule")
+    beta_val = 5.35e-2 / kelvin
+    temp_val = 6 * kelvin
+    kappa_val = 9.42e-8 / (newton / meter**2)
+    press_val = 19.7 * atmosphere
+    P, T, beta, kappa, u, v = spp.symbols("P T beta kappa u v")
+
+    converted = (
+        spp.Eq(spp.partial(u, v, hold=T), -P + T * beta / kappa)
+        .subs({P: press_val, T: temp_val, beta: beta_val, kappa: kappa_val}, preserve_partials=True)
+        .convert_to(joule / meter**3)
+    )
+
+    assert converted.rhs.has(joule)
+    assert converted.rhs.has(meter)
+    assert not converted.rhs.has(newton)
+    expected_value = 1411540.81210191
+    assert float(spp.N(converted.rhs / (joule / meter**3))) == pytest.approx(expected_value)
+
+
+def test_scientific_notation_expression_helper():
+    expr = spp.sympify("2746595.14017649*x + 0.0001234")
+    converted = spp.scientific_notation(expr, sigfigs=5)
+
+    assert ("10**6" in str(converted)) or ("e+6" in str(converted))
+    assert ("10**(-4)" in str(converted)) or ("/10**4" in str(converted))
+
+
+def test_scientific_notation_equation_helper():
+    x = spp.symbols("x")
+    eq = spp.Eq(x, 2746595.14017649)
+
+    converted = spp.scientific_notation(eq, sigfigs=4)
+
+    assert ("10**6" in str(converted.rhs)) or ("e+6" in str(converted.rhs))
+
+
+def test_equation_latex_scientific_fluent_output():
+    x = spp.symbols("x")
+    eq = spp.Eq(x, 2746595.14017649)
+    captured: list[tuple[object, bool, int]] = []
+
+    def fake_display_latex(expr, scientific: bool = False, sigfigs: int = 6):
+        captured.append((expr, scientific, sigfigs))
+
+    original_display_latex = symbolic_mod.display_latex
+    symbolic_mod.display_latex = fake_display_latex
+    try:
+        returned = eq.latex_scientific(sigfigs=4)
+    finally:
+        symbolic_mod.display_latex = original_display_latex
+
+    assert returned is eq
+    assert len(captured) == 1
+    _, scientific, sigfigs = captured[0]
+    assert scientific is True
+    assert sigfigs == 4
+
+
+def test_spp_latex_scientific_helper():
+    x = spp.symbols("x")
+    eq = spp.Eq(x, 0.0179256)
+    captured: list[tuple[object, bool, int]] = []
+
+    def fake_display_latex(expr, scientific: bool = False, sigfigs: int = 6):
+        captured.append((expr, scientific, sigfigs))
+
+    original_display_latex = symbolic_mod.display_latex
+    symbolic_mod.display_latex = fake_display_latex
+    try:
+        returned = spp.latex_scientific(eq, sigfigs=6)
+    finally:
+        symbolic_mod.display_latex = original_display_latex
+
+    assert returned is eq
+    assert len(captured) == 1
+    _, scientific, sigfigs = captured[0]
+    assert scientific is True
+    assert sigfigs == 6
+
+
+def test_spp_latex_scientific_places_units_at_end():
+    x = spp.symbols("x")
+    meter, kilomole = spp.units("meter kilomole")
+    raw_eq = spp.Eq(x, 0.0179256 * meter**3 / kilomole).unwrap()
+
+    latex = spp.latex_scientific(raw_eq, sigfigs=6)
+
+    assert "1.79256 \\times 10^{-2} \\frac{\\text{m}^{3}}{\\text{kmol}}" in latex
+
+
+def test_spp_latex_scientific_spaces_adjacent_units():
+    x = spp.symbols("x")
+    joule, kilomole = spp.units("joule kilomole")
+    raw_eq = spp.Eq(x, 3 * joule * kilomole).unwrap()
+
+    latex = spp.latex_scientific(raw_eq, sigfigs=6)
+
+    assert "\\text{J} \\, \\text{kmol}" in latex
+
+
+def test_equation_display_fluent_output():
+    x = spp.symbols("x")
+    eq = spp.Eq(x, 1)
+    captured: list[object] = []
+
+    def fake_display_expr(expr):
+        captured.append(expr)
+
+    original_display_expr = symbolic_mod.display_expr
+    symbolic_mod.display_expr = fake_display_expr
+    try:
+        returned = eq.display()
+    finally:
+        symbolic_mod.display_expr = original_display_expr
+
+    assert returned is eq
+    assert captured == [eq.eq]
+
+
+def test_spp_display_helper_returns_equation():
+    x = spp.symbols("x")
+    eq = spp.Eq(x, 1)
+    captured: list[object] = []
+
+    def fake_display_expr(expr):
+        captured.append(expr)
+
+    original_display_expr = symbolic_mod.display_expr
+    symbolic_mod.display_expr = fake_display_expr
+    try:
+        returned = spp.display(eq)
+    finally:
+        symbolic_mod.display_expr = original_display_expr
+
+    assert returned is eq
+    assert captured == [eq.eq]
 
 
 def test_lambdify_units_ideal_gas_vectorized_pressure():

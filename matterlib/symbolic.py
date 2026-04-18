@@ -1,9 +1,11 @@
 import sympy as sp
+import re
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, cast
 from types import ModuleType
 from sympy.core.relational import Equality
 from sympy.physics.units import Quantity, convert_to, mol
+from sympy.printing.latex import LatexPrinter
 import sympy.physics.units as units
 
 
@@ -68,6 +70,50 @@ def _freeze_constrained_partials(
         Equality, sp.Eq(eq.lhs.xreplace(frozen_map), eq.rhs.xreplace(frozen_map))
     )
     return frozen_eq, thaw_map
+
+
+def _freeze_constrained_partials_expr(
+    expr: sp.Expr,
+) -> tuple[sp.Expr, dict[sp.Dummy, "ConstrainedPartial"]]:
+    partials = sorted(
+        cast(set[ConstrainedPartial], expr.atoms(ConstrainedPartial)),
+        key=lambda item: item.sort_key(),
+    )
+    if not partials:
+        return expr, {}
+    frozen_map = {
+        partial: sp.Dummy(f"_cp_rhs_{index}") for index, partial in enumerate(partials)
+    }
+    thaw_map = {dummy: partial for partial, dummy in frozen_map.items()}
+    frozen_expr = cast(sp.Expr, expr.xreplace(frozen_map))
+    return frozen_expr, thaw_map
+
+
+def _merge_substitutions(
+    args: tuple[Any, ...], kwargs: dict[str, Any], method_name: str
+) -> tuple[dict[Any, Any], bool]:
+    preserve_partials = bool(kwargs.pop("preserve_partials", False))
+    if kwargs:
+        unexpected = ", ".join(sorted(kwargs.keys()))
+        raise TypeError(
+            f"{method_name} accepts only dict/Equation positional replacements "
+            f"and optional preserve_partials; got unexpected keyword(s): {unexpected}"
+        )
+
+    merged_replacements: dict[Any, Any] = {}
+    for replacement in args:
+        if isinstance(replacement, Equation):
+            merged_replacements.update(replacement.as_dict())
+        elif isinstance(replacement, Mapping):
+            merged_replacements.update(cast(dict[Any, Any], dict(replacement)))
+        elif isinstance(replacement, Equality):
+            merged_replacements.update({replacement.lhs: replacement.rhs})
+        else:
+            raise TypeError(
+                f"{method_name} accepts only dict/Equation replacements; "
+                f"got {type(replacement).__name__}"
+            )
+    return merged_replacements, preserve_partials
 
 
 class ConstrainedPartial(sp.Expr):
@@ -170,6 +216,128 @@ def _round_sig(x: sp.Expr, sig: int) -> sp.Expr:
     return sp.Float(x, sig)
 
 
+def _to_scientific_float(x: sp.Float, sigfigs: int) -> sp.Expr:
+    if x == 0:
+        return sp.Float(0, sigfigs)
+    text = f"{float(x):.{sigfigs - 1}e}"
+    mantissa_text, exponent_text = text.split("e")
+    mantissa = sp.Float(mantissa_text, sigfigs)
+    exponent = int(exponent_text)
+    if exponent == 0:
+        return cast(sp.Expr, mantissa)
+    return cast(
+        sp.Expr,
+        sp.UnevaluatedExpr(
+            sp.Mul(mantissa, sp.Pow(10, exponent, evaluate=False), evaluate=False)
+        ),
+    )
+
+
+def scientific_notation_expr(expr: sp.Expr, sigfigs: int = 6) -> sp.Expr:
+    """Rewrite Float numbers in expr as mantissa*10**exponent."""
+    if sigfigs < 1:
+        raise ValueError("sigfigs must be >= 1")
+    sym_expr = cast(sp.Expr, sp.sympify(expr))
+    return cast(
+        sp.Expr,
+        sym_expr.replace(
+            lambda node: isinstance(node, sp.Float),
+            lambda node: _to_scientific_float(cast(sp.Float, node), sigfigs),
+        ),
+    )
+
+
+class _ScientificLatexPrinter(LatexPrinter):
+    def __init__(self, sigfigs: int, settings: dict[str, Any] | None = None):
+        self._sigfigs = sigfigs
+        self._unit_reorder_disabled = False
+        super().__init__(settings=settings or {})
+
+    def _print_Float(self, expr: sp.Float) -> str:
+        if expr == 0:
+            return "0"
+        text = f"{float(expr):.{self._sigfigs - 1}e}"
+        mantissa_text, exponent_text = text.split("e")
+        exponent = int(exponent_text)
+        if exponent == 0:
+            return mantissa_text
+        return rf"{mantissa_text} \times 10^{{{exponent}}}"
+
+    def _is_pure_unit_factor(self, expr: sp.Expr) -> bool:
+        quantities = expr.atoms(Quantity)
+        if not quantities:
+            return False
+        stripped = cast(
+            sp.Expr, expr.xreplace({quantity: sp.Integer(1) for quantity in quantities})
+        )
+        simplified = cast(sp.Expr, sp.simplify(stripped))
+        return bool(simplified.is_number)
+
+    def _print_Mul(self, expr: sp.Mul) -> str:
+        if self._unit_reorder_disabled:
+            return super()._print_Mul(expr)
+
+        unit_args: list[sp.Expr] = []
+        other_args: list[sp.Expr] = []
+        for arg in expr.args:
+            if self._is_pure_unit_factor(cast(sp.Expr, arg)):
+                unit_args.append(cast(sp.Expr, arg))
+            else:
+                other_args.append(cast(sp.Expr, arg))
+
+        if unit_args and other_args:
+            other_expr = cast(sp.Expr, sp.Mul(*other_args, evaluate=False))
+            unit_expr = cast(sp.Expr, sp.Mul(*unit_args, evaluate=False))
+            self._unit_reorder_disabled = True
+            try:
+                other_latex = self._print(other_expr)
+                unit_latex = self._print(unit_expr)
+            finally:
+                self._unit_reorder_disabled = False
+            return rf"{other_latex} {unit_latex}"
+
+        return super()._print_Mul(expr)
+
+
+def scientific_notation_latex(expr: Any, sigfigs: int = 6) -> str:
+    """Render expr to LaTeX with Float values in scientific notation."""
+    if sigfigs < 1:
+        raise ValueError("sigfigs must be >= 1")
+    printer = _ScientificLatexPrinter(sigfigs=sigfigs)
+    return _add_unit_text_spacing(printer.doprint(sp.sympify(expr)))
+
+
+def _add_unit_text_spacing(latex_text: str) -> str:
+    """Insert thin spaces between adjacent unit \\text{...} tokens."""
+    return re.sub(r"(\\text\{[^{}]+\})\s*(?=\\text\{)", r"\1 \\, ", latex_text)
+
+
+def display_latex(expr: Any, scientific: bool = False, sigfigs: int = 6) -> None:
+    """Display LaTeX in notebooks, fallback to printing the string."""
+    latex_text = (
+        scientific_notation_latex(expr, sigfigs=sigfigs)
+        if scientific
+        else _add_unit_text_spacing(sp.latex(sp.sympify(expr)))
+    )
+    try:
+        from IPython.display import Math, display
+
+        display(Math(latex_text))
+    except Exception:
+        print(latex_text)
+
+
+def display_expr(expr: Any) -> None:
+    """Display SymPy expression/equation in notebooks, fallback to print."""
+    rendered = sp.sympify(expr)
+    try:
+        from IPython.display import display
+
+        display(rendered)
+    except Exception:
+        print(rendered)
+
+
 def solve_all(expr, var):
     sol = sp.solve(expr, var)
     if not sol:
@@ -212,8 +380,23 @@ def subs_rhs(eq: Equality, replacements: dict[Any, Any]) -> Equality:
 
 def convert_eq(eq: Equality, target_units: sp.Expr) -> Equality:
     """Convert the RHS of an equation to target_units."""
-    rhs = cast(sp.Expr, sp.cancel(eq.rhs))
-    return cast(Equality, sp.Eq(eq.lhs, convert_to(rhs, target_units)))
+    target_expr = cast(sp.Expr, sp.sympify(target_units))
+    target_quantities = target_expr.atoms(Quantity)
+    rhs = cast(sp.Expr, eq.rhs)
+    converted_direct = cast(sp.Expr, convert_to(rhs, target_units))
+    converted_canceled = cast(sp.Expr, convert_to(cast(sp.Expr, sp.cancel(rhs)), target_units))
+
+    def conversion_score(expr: sp.Expr) -> tuple[int, int]:
+        quantities = expr.atoms(Quantity)
+        extra = len(quantities - target_quantities)
+        total = len(quantities)
+        return (extra, total)
+
+    converted = min(
+        (converted_direct, converted_canceled),
+        key=lambda candidate: conversion_score(candidate),
+    )
+    return cast(Equality, sp.Eq(eq.lhs, converted))
 
 
 def combine_logs_eq(eq: Equality, force: bool = True) -> Equality:
@@ -308,27 +491,9 @@ class Equation:
         return [self._new(cast(Equality, sp.Eq(var, s))) for s in sol]
 
     def subs(self, *args: Any, **kwargs: Any) -> "Equation":
-        preserve_partials = bool(kwargs.pop("preserve_partials", False))
-        if kwargs:
-            unexpected = ", ".join(sorted(kwargs.keys()))
-            raise TypeError(
-                "Equation.subs accepts only dict/Equation positional replacements "
-                f"and optional preserve_partials; got unexpected keyword(s): {unexpected}"
-            )
-
-        merged_replacements: dict[Any, Any] = {}
-        for replacement in args:
-            if isinstance(replacement, Equation):
-                merged_replacements.update(replacement.as_dict())
-            elif isinstance(replacement, Mapping):
-                merged_replacements.update(cast(dict[Any, Any], dict(replacement)))
-            elif isinstance(replacement, Equality):
-                merged_replacements.update({replacement.lhs: replacement.rhs})
-            else:
-                raise TypeError(
-                    "Equation.subs accepts only dict/Equation replacements; "
-                    f"got {type(replacement).__name__}"
-                )
+        merged_replacements, preserve_partials = _merge_substitutions(
+            args, kwargs, "Equation.subs"
+        )
         target_eq = self.eq
         thaw_map: dict[sp.Dummy, ConstrainedPartial] = {}
         if preserve_partials:
@@ -346,8 +511,18 @@ class Equation:
             )
         )
 
-    def subs_rhs(self, replacements: dict[Any, Any]) -> "Equation":
-        return self._new(subs_rhs(self.eq, replacements))
+    def subs_rhs(self, *args: Any, **kwargs: Any) -> "Equation":
+        merged_replacements, preserve_partials = _merge_substitutions(
+            args, kwargs, "Equation.subs_rhs"
+        )
+        target_rhs = self.rhs
+        thaw_map: dict[sp.Dummy, ConstrainedPartial] = {}
+        if preserve_partials:
+            target_rhs, thaw_map = _freeze_constrained_partials_expr(target_rhs)
+        substituted_rhs = cast(sp.Expr, target_rhs.subs(merged_replacements))
+        if thaw_map:
+            substituted_rhs = cast(sp.Expr, substituted_rhs.xreplace(thaw_map))
+        return self._new(cast(Equality, sp.Eq(self.lhs, substituted_rhs)))
 
     def map(self, f: Callable[[sp.Expr], sp.Expr]) -> "Equation":
         return self._new(cast(Equality, sp.Eq(f(self.lhs), f(self.rhs))))
@@ -357,6 +532,23 @@ class Equation:
 
     def evalf(self, *args: Any, **kwargs: Any) -> "Equation":
         return self.map(lambda s: cast(sp.Expr, s.evalf(*args, **kwargs)))
+
+    def scientific_notation(self, sigfigs: int = 6) -> "Equation":
+        return self.map(lambda s: scientific_notation_expr(s, sigfigs=sigfigs))
+
+    def latex(self, scientific: bool = False, sigfigs: int = 6) -> "Equation":
+        display_latex(self.eq, scientific=scientific, sigfigs=sigfigs)
+        return self
+
+    def latex_scientific(self, sigfigs: int = 6) -> "Equation":
+        return self.latex(scientific=True, sigfigs=sigfigs)
+
+    def display(self) -> "Equation":
+        display_expr(self.eq)
+        return self
+
+    def show(self) -> "Equation":
+        return self.display()
 
     def reverse_sides(self) -> "Equation":
         return self._new(cast(Equality, sp.Eq(self.rhs, self.lhs)))
@@ -717,11 +909,36 @@ class _SympyPhys:
         raw = eq.eq if isinstance(eq, Equation) else eq
         return Equation(combine_logs_eq(raw, force=force))
 
-    def subs_rhs(
-        self, eq: Equality | Equation, replacements: dict[Any, Any]
-    ) -> Equation:
-        raw = eq.eq if isinstance(eq, Equation) else eq
-        return Equation(subs_rhs(raw, replacements))
+    def scientific_notation(
+        self, expr: Equality | Equation | sp.Expr, sigfigs: int = 6
+    ) -> Equation | sp.Expr:
+        if isinstance(expr, Equation):
+            return expr.scientific_notation(sigfigs=sigfigs)
+        if isinstance(expr, Equality):
+            return Equation(expr).scientific_notation(sigfigs=sigfigs)
+        return scientific_notation_expr(cast(sp.Expr, expr), sigfigs=sigfigs)
+
+    def latex_scientific(
+        self, expr: Equality | Equation | sp.Expr, sigfigs: int = 6
+    ) -> str | Equation:
+        if isinstance(expr, Equation):
+            return expr.latex_scientific(sigfigs=sigfigs)
+        if isinstance(expr, Equality):
+            return scientific_notation_latex(expr, sigfigs=sigfigs)
+        return scientific_notation_latex(cast(sp.Expr, expr), sigfigs=sigfigs)
+
+    def display(self, expr: Equality | Equation | sp.Expr) -> Equation | sp.Expr:
+        if isinstance(expr, Equation):
+            return expr.display()
+        if isinstance(expr, Equality):
+            wrapped = Equation(expr)
+            return wrapped.display()
+        display_expr(expr)
+        return expr
+
+    def subs_rhs(self, eq: Equality | Equation, *args: Any, **kwargs: Any) -> Equation:
+        wrapped = eq if isinstance(eq, Equation) else Equation(eq)
+        return wrapped.subs_rhs(*args, **kwargs)
 
     # This is a hack to get things like the molar gas constant to stop being symbolic.
     def eval_constant(
