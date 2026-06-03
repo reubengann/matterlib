@@ -1,10 +1,11 @@
+import importlib
 import sympy as sp
 import re
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, cast
 from types import ModuleType
 from sympy.core.relational import Equality
-from sympy.physics.units import Quantity, convert_to, mol
+from sympy.physics.units import Quantity, convert_to
 from sympy.printing.latex import LatexPrinter
 import sympy.physics.units as units
 
@@ -384,7 +385,9 @@ def convert_eq(eq: Equality, target_units: sp.Expr) -> Equality:
     target_quantities = target_expr.atoms(Quantity)
     rhs = cast(sp.Expr, eq.rhs)
     converted_direct = cast(sp.Expr, convert_to(rhs, target_units))
-    converted_canceled = cast(sp.Expr, convert_to(cast(sp.Expr, sp.cancel(rhs)), target_units))
+    converted_canceled = cast(
+        sp.Expr, convert_to(cast(sp.Expr, sp.cancel(rhs)), target_units)
+    )
 
     def conversion_score(expr: sp.Expr) -> tuple[int, int]:
         quantities = expr.atoms(Quantity)
@@ -405,8 +408,13 @@ def combine_logs_eq(eq: Equality, force: bool = True) -> Equality:
     def normalize_log_node(node: sp.Expr) -> sp.Expr:
         if not isinstance(node, sp.log):
             return node
-        if isinstance(node.args[0], sp.Pow) and not cast(sp.Expr, node.args[0].exp).is_number:
-            return cast(sp.Expr, node.args[0].exp * sp.log(node.args[0].base, evaluate=False))
+        if (
+            isinstance(node.args[0], sp.Pow)
+            and not cast(sp.Expr, node.args[0].exp).is_number
+        ):
+            return cast(
+                sp.Expr, node.args[0].exp * sp.log(node.args[0].base, evaluate=False)
+            )
         expanded = cast(sp.Expr, sp.expand_log(node, force=force))
         factored = cast(sp.Expr, sp.factor_terms(expanded))
         coeff, rest = factored.as_independent(sp.log, as_Add=False)
@@ -805,7 +813,7 @@ class _UnitsNamespace:
     def __init__(self, module: ModuleType):
         self._module = module
         kmol = Quantity("kilomole", abbrev="kmol")
-        kmol.set_global_relative_scale_factor(1000, mol)
+        kmol.set_global_relative_scale_factor(1000, units.mole)
         self._aliases: dict[str, Any] = {
             "kmol": kmol,
             "kilomole": kmol,
@@ -835,6 +843,29 @@ class _UnitsNamespace:
         return getattr(self._module, name)
 
 
+class _LazyModuleNamespace:
+    """Lazy module proxy that also supports tab completion via __dir__."""
+
+    def __init__(self, module_path: str):
+        self._module_path = module_path
+        self._module: ModuleType | None = None
+
+    def _load(self) -> ModuleType:
+        if self._module is None:
+            self._module = importlib.import_module(self._module_path)
+        return self._module
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._load(), name)
+
+    def __dir__(self) -> list[str]:
+        return sorted(set(super().__dir__()) | set(dir(self._load())))
+
+    def __repr__(self) -> str:
+        state = "loaded" if self._module is not None else "lazy"
+        return f"<_LazyModuleNamespace {self._module_path} ({state})>"
+
+
 class _SympyPhys:
     """
     Thin namespace wrapper:
@@ -858,6 +889,7 @@ class _SympyPhys:
         self.acos = sp.acos
         self.atan = sp.atan
         self.Integral = sp.Integral
+        self.thermo = _LazyModuleNamespace("matterlib.thermo")
 
     def Eq(self, lhs: sp.Expr, rhs: sp.Expr, **kwargs: Any) -> Equation:
         return Equation(cast(Equality, sp.Eq(lhs, rhs, **kwargs)))
@@ -904,7 +936,7 @@ class _SympyPhys:
         return Equation(convert_eq(raw, target_units))
 
     def combine_logs(self, eq: Equality | Equation, force: bool = True) -> Equation:
-        """For formulas like log(a) + log(b), combine the logs into a single log and move 
+        """For formulas like log(a) + log(b), combine the logs into a single log and move
         prefactors outside the logarithm."""
         raw = eq.eq if isinstance(eq, Equation) else eq
         return Equation(combine_logs_eq(raw, force=force))
