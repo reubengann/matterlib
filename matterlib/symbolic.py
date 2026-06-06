@@ -900,6 +900,18 @@ class _SympyPhys:
     def partial(self, dependent, wrt, hold=None) -> ConstrainedPartial:
         return constrained_partial(dependent, wrt, hold=hold)
 
+    def _unwrap_equations(self, expr):
+        if isinstance(expr, Equation):
+            return expr.eq
+        if isinstance(expr, list):
+            return [self._unwrap_equations(item) for item in expr]
+        if isinstance(expr, tuple):
+            return tuple(self._unwrap_equations(item) for item in expr)
+        return expr
+
+    def nsolve(self, f, *args: Any, **kwargs: Any):
+        return sp.nsolve(self._unwrap_equations(f), *args, **kwargs)
+
     def lambdify_units(
         self,
         args: Any,

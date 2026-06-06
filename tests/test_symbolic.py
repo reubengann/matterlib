@@ -129,6 +129,26 @@ def test_solve_system_accepts_state_equations():
     assert solutions == {x: 2, y: 1}
 
 
+def test_nsolve_accepts_equation():
+    x = spp.symbols("x")
+    eq = spp.Eq(x**2, 4)
+
+    solution = spp.nsolve(eq, x, 1)
+
+    assert float(solution) == pytest.approx(2.0)
+
+
+def test_nsolve_accepts_equation_system():
+    x, y = spp.symbols("x y")
+    eq1 = spp.Eq(x + y, 3).with_state(x, y)
+    eq2 = spp.Eq(x - y, 1)
+
+    solution = spp.nsolve([eq1, eq2], [x, y], [1, 1])
+
+    assert float(solution[0]) == pytest.approx(2.0)
+    assert float(solution[1]) == pytest.approx(1.0)
+
+
 def test_R_kmol_matches_eval_constant():
     joule, kilogram, molar_gas_constant, kelvin, kilomole = spp.units(
         "joule kilogram molar_gas_constant kelvin kilomole"
