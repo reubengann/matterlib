@@ -93,7 +93,7 @@ def _freeze_constrained_partials_expr(
 def _merge_substitutions(
     args: tuple[Any, ...], kwargs: dict[str, Any], method_name: str
 ) -> tuple[dict[Any, Any], bool]:
-    preserve_partials = bool(kwargs.pop("preserve_partials", False))
+    preserve_partials = bool(kwargs.pop("preserve_partials", True))
     if kwargs:
         unexpected = ", ".join(sorted(kwargs.keys()))
         raise TypeError(
@@ -115,6 +115,20 @@ def _merge_substitutions(
                 f"got {type(replacement).__name__}"
             )
     return merged_replacements, preserve_partials
+
+
+def _split_constrained_partial_replacements(
+    replacements: dict[Any, Any],
+) -> tuple[dict[Any, Any], dict[Any, Any]]:
+    partial_replacements = {
+        key: value for key, value in replacements.items() if isinstance(key, ConstrainedPartial)
+    }
+    other_replacements = {
+        key: value
+        for key, value in replacements.items()
+        if not isinstance(key, ConstrainedPartial)
+    }
+    return partial_replacements, other_replacements
 
 
 class ConstrainedPartial(sp.Expr):
@@ -372,7 +386,11 @@ def normalize_units(
     if sigfigs is not None:
         coeff = _round_sig(coeff, sigfigs)
 
-    return cast(Equality, sp.Eq(eq.lhs, coeff * units))
+    rhs = cast(sp.Expr, coeff * units)
+    if decimal:
+        rhs = cast(sp.Expr, rhs.evalf())
+
+    return cast(Equality, sp.Eq(eq.lhs, rhs))
 
 
 def subs_rhs(eq: Equality, replacements: dict[Any, Any]) -> Equality:
@@ -502,7 +520,13 @@ class Equation:
         merged_replacements, preserve_partials = _merge_substitutions(
             args, kwargs, "Equation.subs"
         )
-        target_eq = self.eq
+        if preserve_partials:
+            partial_replacements, merged_replacements = (
+                _split_constrained_partial_replacements(merged_replacements)
+            )
+            target_eq = cast(Equality, self.eq.subs(partial_replacements))
+        else:
+            target_eq = self.eq
         thaw_map: dict[sp.Dummy, ConstrainedPartial] = {}
         if preserve_partials:
             target_eq, thaw_map = _freeze_constrained_partials(target_eq)
@@ -523,7 +547,13 @@ class Equation:
         merged_replacements, preserve_partials = _merge_substitutions(
             args, kwargs, "Equation.subs_rhs"
         )
-        target_rhs = self.rhs
+        if preserve_partials:
+            partial_replacements, merged_replacements = (
+                _split_constrained_partial_replacements(merged_replacements)
+            )
+            target_rhs = cast(sp.Expr, self.rhs.subs(partial_replacements))
+        else:
+            target_rhs = self.rhs
         thaw_map: dict[sp.Dummy, ConstrainedPartial] = {}
         if preserve_partials:
             target_rhs, thaw_map = _freeze_constrained_partials_expr(target_rhs)

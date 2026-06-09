@@ -223,11 +223,21 @@ def test_subs_accepts_equation_directly():
     assert result.rhs == expected.rhs
 
 
-def test_subs_replaces_inside_constrained_partials_by_default():
+def test_subs_preserves_constrained_partials_by_default():
     P, v, T = spp.symbols("P v T")
     eq = spp.Eq(spp.partial(v, T, hold=P) + v, 0)
 
     replaced = eq.subs({P: 2, v: 3, T: 4})
+    expected = spp.Eq(spp.partial(v, T, hold=P) + 3, 0)
+
+    assert replaced.eq == expected.eq
+
+
+def test_subs_can_replace_inside_constrained_partials_when_requested():
+    P, v, T = spp.symbols("P v T")
+    eq = spp.Eq(spp.partial(v, T, hold=P) + v, 0)
+
+    replaced = eq.subs({P: 2, v: 3, T: 4}, preserve_partials=False)
     expected = spp.Eq(spp.partial(3, 4, hold=2) + 3, 0)
 
     assert replaced.eq == expected.eq
@@ -240,6 +250,31 @@ def test_subs_can_preserve_constrained_partials():
     replaced = eq.subs({P: 2, v: 3, T: 4}, preserve_partials=True)
     expected = spp.Eq(spp.partial(v, T, hold=P) + 3, 0)
 
+    assert replaced.eq == expected.eq
+
+
+def test_subs_preserves_partial_argument_when_replacing_solved_variable():
+    P, R, T, a, b, beta, c_P, h, v = spp.symbols("P R T a b beta c_P h v")
+    van_der_waals_eqn_of_state = spp.Eq(
+        (P + a / v**2) * (-b + v), R * T
+    ).with_state(P, v, T)
+    eq = spp.Eq(spp.partial(T, P, hold=h), v * (T * beta - 1) / c_P)
+
+    replaced = eq.subs(van_der_waals_eqn_of_state.solve_for(P))
+
+    assert replaced.lhs == spp.partial(T, P, hold=h)
+    assert replaced.rhs == v * (T * beta - 1) / c_P
+
+
+def test_subs_preserve_partials_allows_whole_partial_replacement():
+    P, R, T, a, b, beta, v = spp.symbols("P R T a b beta v")
+    partial = spp.partial(v, T, hold=P)
+    eq1 = spp.Eq(partial, R * v**3 / (P * v**3 + 2 * a * b - a * v))
+    expansivity_definition = spp.Eq(beta, partial / v)
+
+    replaced = expansivity_definition.subs(eq1, preserve_partials=True)
+
+    expected = spp.Eq(beta, R * v**2 / (P * v**3 + 2 * a * b - a * v))
     assert replaced.eq == expected.eq
 
 
@@ -269,6 +304,26 @@ def test_subs_rhs_accepts_variadic_replacements():
     assert result.eq == spp.Eq(x, 5).eq
 
 
+def test_subs_rhs_preserves_constrained_partials_by_default():
+    P, v, T = spp.symbols("P v T")
+    eq = spp.Eq(0, spp.partial(v, T, hold=P) + v)
+
+    replaced = eq.subs_rhs({P: 2, v: 3, T: 4})
+    expected = spp.Eq(0, spp.partial(v, T, hold=P) + 3)
+
+    assert replaced.eq == expected.eq
+
+
+def test_subs_rhs_can_replace_inside_constrained_partials_when_requested():
+    P, v, T = spp.symbols("P v T")
+    eq = spp.Eq(0, spp.partial(v, T, hold=P) + v)
+
+    replaced = eq.subs_rhs({P: 2, v: 3, T: 4}, preserve_partials=False)
+    expected = spp.Eq(0, spp.partial(3, 4, hold=2) + 3)
+
+    assert replaced.eq == expected.eq
+
+
 def test_subs_rhs_can_preserve_constrained_partials():
     P, v, T = spp.symbols("P v T")
     eq = spp.Eq(0, spp.partial(v, T, hold=P) + v)
@@ -276,6 +331,18 @@ def test_subs_rhs_can_preserve_constrained_partials():
     replaced = eq.subs_rhs({P: 2, v: 3, T: 4}, preserve_partials=True)
     expected = spp.Eq(0, spp.partial(v, T, hold=P) + 3)
 
+    assert replaced.eq == expected.eq
+
+
+def test_subs_rhs_preserve_partials_allows_whole_partial_replacement():
+    P, R, T, a, b, beta, v = spp.symbols("P R T a b beta v")
+    partial = spp.partial(v, T, hold=P)
+    eq1 = spp.Eq(partial, R * v**3 / (P * v**3 + 2 * a * b - a * v))
+    expansivity_definition = spp.Eq(beta, partial / v)
+
+    replaced = expansivity_definition.subs_rhs(eq1, preserve_partials=True)
+
+    expected = spp.Eq(beta, R * v**2 / (P * v**3 + 2 * a * b - a * v))
     assert replaced.eq == expected.eq
 
 
@@ -378,6 +445,26 @@ def test_convert_to_prefers_target_unit_basis_for_pressure_expressions():
     assert not converted.rhs.has(newton)
     expected_value = 1411540.81210191
     assert float(spp.N(converted.rhs / (joule / meter**3))) == pytest.approx(expected_value)
+
+
+def test_normalize_units_decimal_evaluates_nested_numeric_radicals():
+    R, T, a, b, v = spp.symbols("R T a b v")
+    joule, meter, kilomole, kelvin = spp.units("joule meter kilomole kelvin")
+    eq = spp.Eq(v, b / (-spp.sqrt(2) * spp.sqrt(R * T * b / a) / 2 + 1)).subs(
+        {
+            a: 3.44e3 * joule * meter**3 / kilomole**2,
+            b: 0.0234 * meter**3 / kilomole,
+            R: spp.R_kmol(),
+            T: 20 * kelvin,
+        }
+    )
+
+    normalized = eq.normalize_units(decimal=True)
+
+    assert not normalized.rhs.has(spp.sqrt)
+    assert float(spp.N(normalized.rhs / (meter**3 / kilomole))) == pytest.approx(
+        0.0943732622042842
+    )
 
 
 def test_scientific_notation_expression_helper():
