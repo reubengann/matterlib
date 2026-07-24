@@ -226,9 +226,12 @@ def constrained_partial(dependent, wrt, hold=None) -> ConstrainedPartial:
 
 def _round_sig(x: sp.Expr, sig: int) -> sp.Expr:
     """Round a SymPy number to `sig` significant figures."""
+    if sig < 1:
+        raise ValueError("sig must be >= 1")
     if x == 0:
-        return x
-    return sp.Float(x, sig)
+        return sp.Float(0)
+    text = f"{float(sp.N(x, sig + 3)):.{sig - 1}e}"
+    return sp.Float(text)
 
 
 def _to_scientific_float(x: sp.Float, sigfigs: int) -> sp.Expr:

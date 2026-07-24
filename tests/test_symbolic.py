@@ -467,6 +467,15 @@ def test_normalize_units_decimal_evaluates_nested_numeric_radicals():
     )
 
 
+def test_normalize_units_sigfigs_uses_decimal_significant_figures_with_units():
+    p = spp.symbols("p")
+    atmosphere = spp.units("atmosphere")
+
+    normalized = spp.Eq(p, 2 * atmosphere / 3).normalize_units(sigfigs=3)
+
+    assert normalized.rhs == 0.667 * atmosphere
+
+
 def test_scientific_notation_expression_helper():
     expr = spp.sympify("2746595.14017649*x + 0.0001234")
     converted = spp.scientific_notation(expr, sigfigs=5)
