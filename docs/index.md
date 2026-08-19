@@ -3,6 +3,11 @@
 `matterlib` provides symbolic mathematics helpers and Jupyter animation tools
 for the Theory of Matter course.
 
+## Examples
+
+- [2D animation examples](examples/anim2d.md)
+- [3D animation examples](examples/anim3d.md)
+
 ## Public modules
 
 - [`matterlib.anim2d`](reference/anim2d.md) provides ipycanvas animation

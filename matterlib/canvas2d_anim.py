@@ -11,7 +11,6 @@ import traceback
 import ipywidgets as widgets
 from ipycanvas import Canvas
 
-
 # ----------------------------
 # Timer primitive (from example_2d.py)
 # ----------------------------
