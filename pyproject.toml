@@ -18,6 +18,12 @@ dependencies = [
   "jupyterlab>=4.5",
 ]
 
+[project.optional-dependencies]
+docs = [
+  "mkdocs-material",
+  "mkdocstrings[python]",
+]
+
 [tool.setuptools.packages.find]
 where = ["."]
 exclude = ["tests", "tests.*", "docs", "docs.*"]

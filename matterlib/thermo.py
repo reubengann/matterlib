@@ -67,6 +67,7 @@ const_var_map[v][f] = s * kappa * v
 
 
 def make_standard_partial(dependent, wrt, hold):
+    """Use the Bridgman tables to compute the given standard partial in standard form."""
     if hold not in const_var_map:
         raise Exception(
             f"No standard derivative for constant {hold}. Options for constant are {list(const_var_map.keys())}"

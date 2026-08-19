@@ -26,7 +26,7 @@ def test_partial_for_solves_constrained_derivative():
     P, v, b, R, T = spp.symbols("P v b R T")
     eq = spp.Eq(P * (v - b), R * T)
 
-    result = eq.partial_for(v, T, hold=P)
+    result = eq.solve_for_partial(v, T, hold=P)
 
     assert result.lhs == spp.partial(v, T, hold=P)
     assert spp.simplify(result.rhs - (R / P)) == 0
@@ -36,7 +36,7 @@ def test_partial_for_matches_residual_formula():
     P, R, T, a, b, v = spp.symbols("P R T a b v")
     eq = spp.Eq((P + a / v**2) * (v - b), R * T)
 
-    result = eq.partial_for(P, v, hold=T)
+    result = eq.solve_for_partial(P, v, hold=T)
     residual = eq.lhs - eq.rhs
     expected = -spp.diff(residual, v) / spp.diff(residual, P)
 
@@ -255,9 +255,9 @@ def test_subs_can_preserve_constrained_partials():
 
 def test_subs_preserves_partial_argument_when_replacing_solved_variable():
     P, R, T, a, b, beta, c_P, h, v = spp.symbols("P R T a b beta c_P h v")
-    van_der_waals_eqn_of_state = spp.Eq(
-        (P + a / v**2) * (-b + v), R * T
-    ).with_state(P, v, T)
+    van_der_waals_eqn_of_state = spp.Eq((P + a / v**2) * (-b + v), R * T).with_state(
+        P, v, T
+    )
     eq = spp.Eq(spp.partial(T, P, hold=h), v * (T * beta - 1) / c_P)
 
     replaced = eq.subs(van_der_waals_eqn_of_state.solve_for(P))
@@ -423,11 +423,15 @@ def test_convert_to_handles_factored_unit_sum_terms():
     assert converted.rhs.has(joule)
     assert not converted.rhs.has(meter)
     expected = eq.evalf().convert_to(joule).rhs
-    assert float(spp.N(converted.rhs / joule)) == pytest.approx(float(spp.N(expected / joule)))
+    assert float(spp.N(converted.rhs / joule)) == pytest.approx(
+        float(spp.N(expected / joule))
+    )
 
 
 def test_convert_to_prefers_target_unit_basis_for_pressure_expressions():
-    kelvin, meter, newton, atmosphere, joule = spp.units("kelvin meter newton atmosphere joule")
+    kelvin, meter, newton, atmosphere, joule = spp.units(
+        "kelvin meter newton atmosphere joule"
+    )
     beta_val = 5.35e-2 / kelvin
     temp_val = 6 * kelvin
     kappa_val = 9.42e-8 / (newton / meter**2)
@@ -436,7 +440,10 @@ def test_convert_to_prefers_target_unit_basis_for_pressure_expressions():
 
     converted = (
         spp.Eq(spp.partial(u, v, hold=T), -P + T * beta / kappa)
-        .subs({P: press_val, T: temp_val, beta: beta_val, kappa: kappa_val}, preserve_partials=True)
+        .subs(
+            {P: press_val, T: temp_val, beta: beta_val, kappa: kappa_val},
+            preserve_partials=True,
+        )
         .convert_to(joule / meter**3)
     )
 
@@ -444,7 +451,9 @@ def test_convert_to_prefers_target_unit_basis_for_pressure_expressions():
     assert converted.rhs.has(meter)
     assert not converted.rhs.has(newton)
     expected_value = 1411540.81210191
-    assert float(spp.N(converted.rhs / (joule / meter**3))) == pytest.approx(expected_value)
+    assert float(spp.N(converted.rhs / (joule / meter**3))) == pytest.approx(
+        expected_value
+    )
 
 
 def test_normalize_units_decimal_evaluates_nested_numeric_radicals():
@@ -568,7 +577,7 @@ def test_equation_display_fluent_output():
     original_display_expr = symbolic_mod.display_expr
     symbolic_mod.display_expr = fake_display_expr
     try:
-        returned = eq.display()
+        returned = eq._display()
     finally:
         symbolic_mod.display_expr = original_display_expr
 
@@ -598,8 +607,10 @@ def test_spp_display_helper_returns_equation():
 def test_lambdify_units_ideal_gas_vectorized_pressure():
     P, R, T, V, n = spp.symbols("P R T V n")
     kelvin, kilomole, meter, pascal = spp.units("kelvin kilomole meter pascal")
-    pressure_expr = spp.Eq(P * V, R * T * n).solve_for(P).rhs.subs(
-        {R: spp.R_kmol(), T: 300 * kelvin, n: 0.25 * kilomole}
+    pressure_expr = (
+        spp.Eq(P * V, R * T * n)
+        .solve_for(P)
+        .rhs.subs({R: spp.R_kmol(), T: 300 * kelvin, n: 0.25 * kilomole})
     )
 
     pressure_fn = spp.lambdify_units(
@@ -617,7 +628,8 @@ def test_lambdify_units_ideal_gas_vectorized_pressure():
         [
             float(
                 spp.N(
-                    convert_to(pressure_expr.subs({V: volume * meter**3}), pascal) / pascal
+                    convert_to(pressure_expr.subs({V: volume * meter**3}), pascal)
+                    / pascal
                 )
             )
             for volume in volumes
@@ -654,7 +666,9 @@ def test_lambdify_units_handles_nested_units_inside_sqrt():
     power, t, m, a, b, T, Tprime, T_1 = spp.symbols("P t m a b T Tprime T_1")
     eq1 = spp.Eq(power * t, spp.Integral((1 / m) * (a + b * Tprime), (Tprime, T_1, T)))
     eq2 = eq1.simplify().solve_for_all(T)[1]
-    joule, kilogram, kelvin, watt, second = spp.units("joule kilogram kelvin watt second")
+    joule, kilogram, kelvin, watt, second = spp.units(
+        "joule kilogram kelvin watt second"
+    )
     eq3 = eq2.subs(
         {
             a: 750 * joule / (kilogram * kelvin),
@@ -675,14 +689,19 @@ def test_lambdify_units_handles_nested_units_inside_sqrt():
 
     ts = np.linspace(0, 5, 6)
     temperatures = fn(ts)
-    converted_unitless = spp.simplify(convert_to(eq3.rhs.subs({t: t * second}), kelvin) / kelvin)
+    converted_unitless = spp.simplify(
+        convert_to(eq3.rhs.subs({t: t * second}), kelvin) / kelvin
+    )
     for _ in range(8):
         quantities = converted_unitless.atoms(Quantity)
         if not quantities:
             break
         converted_unitless = spp.simplify(
             converted_unitless.xreplace(
-                {quantity: spp.sympify(quantity.scale_factor) for quantity in quantities}
+                {
+                    quantity: spp.sympify(quantity.scale_factor)
+                    for quantity in quantities
+                }
             )
         )
     expected = np.array(

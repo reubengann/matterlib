@@ -321,3 +321,19 @@ display(
     )
 )
 ```
+
+## API documentation
+
+The API reference is generated from the source with MkDocs and mkdocstrings.
+Install the documentation dependencies and start a local preview:
+
+```powershell
+& "$env:USERPROFILE\anaconda3\Scripts\conda.exe" run -n work python -m pip install -e ".[docs]"
+& "$env:USERPROFILE\anaconda3\Scripts\conda.exe" run -n work python -m mkdocs serve --livereload
+```
+
+To verify the documentation without starting a server:
+
+```powershell
+& "$env:USERPROFILE\anaconda3\Scripts\conda.exe" run -n work python -m mkdocs build --strict
+```

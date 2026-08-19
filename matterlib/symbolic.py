@@ -121,7 +121,9 @@ def _split_constrained_partial_replacements(
     replacements: dict[Any, Any],
 ) -> tuple[dict[Any, Any], dict[Any, Any]]:
     partial_replacements = {
-        key: value for key, value in replacements.items() if isinstance(key, ConstrainedPartial)
+        key: value
+        for key, value in replacements.items()
+        if isinstance(key, ConstrainedPartial)
     }
     other_replacements = {
         key: value
@@ -132,10 +134,10 @@ def _split_constrained_partial_replacements(
 
 
 class ConstrainedPartial(sp.Expr):
-    """
+    R"""
     Symbolic thermodynamic constrained partial derivative.
 
-    Represents objects like (∂P/∂v)_T.
+    Represents objects like \( \left(\dfrac{\partial P}{\partial v}\right)_T \).
     """
 
     is_commutative = True
@@ -163,12 +165,7 @@ class ConstrainedPartial(sp.Expr):
         return tuple(cast(sp.Expr, item) for item in hold_tuple)
 
     def cycle(self) -> sp.Expr:
-        R"""
-        \left(\dfrac{\partial x}{\partial y}\right)_z \left(\dfrac{\partial y}{\partial z}\right)_x \left(\dfrac{\partial z}{\partial x}\right)_y = -1
-        thus
-        \left(\dfrac{\partial x}{\partial y}\right)_z = \frac{-1}{\left(\dfrac{\partial y}{\partial z}\right)_x \left(\dfrac{\partial z}{\partial x}\right)_y}
-        So from one partial derivative, we get the quotient involving the others.
-        """
+        """See [cycle_eqn()][matterlib.symbolic.ConstrainedPartial.cycle_eqn]. This returns the partial as a bare expression, not as an equation."""
         if len(self.hold) != 1:
             raise ValueError("Cycle identity requires exactly one held variable.")
         x = self.dependent
@@ -181,12 +178,15 @@ class ConstrainedPartial(sp.Expr):
         )
 
     def cycle_eqn(self) -> "Equation":
+        R"""
+        Applies the identity
+        \( \left(\dfrac{\partial x}{\partial y}\right)_z = \frac{-1}{\left(\dfrac{\partial y}{\partial z}\right)_x \left(\dfrac{\partial z}{\partial x}\right)_y} \)
+        So from one partial derivative, we get the quotient involving the others.
+        """
         return Equation(cast(Equality, sp.Eq(self, self.cycle())))
 
     def flip(self) -> sp.Expr:
-        R"""
-        \left(\dfrac{\partial V}{\partial P}\right)_T = \frac{1}{\left(\dfrac{\partial P}{\partial V}\right)_T}
-        """
+        R"""See [flip_eqn()][matterlib.symbolic.ConstrainedPartial.flip_eqn]. This returns the partial as a bare expression, not as an equation."""
         return cast(
             sp.Expr,
             sp.Integer(1)
@@ -194,6 +194,10 @@ class ConstrainedPartial(sp.Expr):
         )
 
     def flip_eqn(self) -> "Equation":
+        R"""
+        Applies the identity
+        \( \left(\dfrac{\partial V}{\partial P}\right)_T = \frac{1}{\left(\dfrac{\partial P}{\partial V}\right)_T} \)
+        """
         return Equation(cast(Equality, sp.Eq(self, self.flip())))
 
     def _latex(self, printer) -> str:
@@ -520,6 +524,16 @@ class Equation:
         return [self._new(cast(Equality, sp.Eq(var, s))) for s in sol]
 
     def subs(self, *args: Any, **kwargs: Any) -> "Equation":
+        """Substitute expressions into both sides of the equation.
+
+        Parameters
+        ----------
+        *args : dictionary or Equation
+            Replacement mappings or equations interpreted as ``{lhs: rhs}``.
+        **kwargs
+            Supports ``preserve_partials`` (default: true). If true, variables
+            inside constrained partial derivatives are not substituted.
+        """
         merged_replacements, preserve_partials = _merge_substitutions(
             args, kwargs, "Equation.subs"
         )
@@ -538,15 +552,16 @@ class Equation:
             substituted = cast(Equality, substituted.xreplace(thaw_map))
         return self._new(substituted)
 
-    def replace(self, replacements: dict[Any, Any]) -> "Equation":
-        return self._new(
-            cast(
-                Equality,
-                sp.Eq(self.lhs.subs(replacements), self.rhs.subs(replacements)),
-            )
-        )
+    # def replace(self, replacements: dict[Any, Any]) -> "Equation":
+    #     return self._new(
+    #         cast(
+    #             Equality,
+    #             sp.Eq(self.lhs.subs(replacements), self.rhs.subs(replacements)),
+    #         )
+    #     )
 
     def subs_rhs(self, *args: Any, **kwargs: Any) -> "Equation":
+        """See [subs()][matterlib.symbolic.Equation.subs]. This substitutes only into the RHS of the equation."""
         merged_replacements, preserve_partials = _merge_substitutions(
             args, kwargs, "Equation.subs_rhs"
         )
@@ -566,6 +581,15 @@ class Equation:
         return self._new(cast(Equality, sp.Eq(self.lhs, substituted_rhs)))
 
     def map(self, f: Callable[[sp.Expr], sp.Expr]) -> "Equation":
+        """Apply a function to both sides of the equation.
+
+        Example:
+        ```python
+        eq = spp.Eq(sp.Eq(x, z))
+        eq.map(lambda s: 1/s)
+        Equation(1/x, 1/z)
+        ```
+        """
         return self._new(cast(Equality, sp.Eq(f(self.lhs), f(self.rhs))))
 
     def simplify(self) -> "Equation":
@@ -578,20 +602,31 @@ class Equation:
         return self.map(lambda s: scientific_notation_expr(s, sigfigs=sigfigs))
 
     def latex(self, scientific: bool = False, sigfigs: int = 6) -> "Equation":
+        """Display the equation while returning it. Useful in a notebook when you want to display an intermediate step.
+
+        Parameters
+        ----------
+        scientific:
+            If true, use scientific notation for numbers.
+        sigfigs:
+            The number of significant figures to display (if scientific is True)
+        """
         display_latex(self.eq, scientific=scientific, sigfigs=sigfigs)
         return self
 
     def latex_scientific(self, sigfigs: int = 6) -> "Equation":
+        """Convenience method for [latex()][matterlib.symbolic.Equation.latex] with scientific notation."""
         return self.latex(scientific=True, sigfigs=sigfigs)
 
-    def display(self) -> "Equation":
+    def _display(self) -> "Equation":
         display_expr(self.eq)
         return self
 
-    def show(self) -> "Equation":
-        return self.display()
+    def _show(self) -> "Equation":
+        return self._display()
 
     def reverse_sides(self) -> "Equation":
+        """Flips the sides of the equation."""
         return self._new(cast(Equality, sp.Eq(self.rhs, self.lhs)))
 
     def expand(self) -> "Equation":
@@ -607,15 +642,19 @@ class Equation:
         return self.map(lambda s: sp.collect(s, *args, **kwargs))
 
     def convert_to(self, target_units: sp.Expr) -> "Equation":
+        """Convert the equation to the given target units."""
         return self._new(convert_eq(self.eq, target_units))
 
     def combine_logs(self, force: bool = True) -> "Equation":
+        R"""Try to forcibly combine logarithms in the equation, so that, for instance, \( \log(x) - \log(y) \) becomes \( \log(x/y) \).
+        This is very important if these quantities have dimension."""
         return self._new(combine_logs_eq(self.eq, force=force))
 
     def as_dict(self):
         return {self.lhs: self.rhs}
 
     def diff_rhs(self, var, simplify_result: bool = True) -> "Equation":
+        """Differentiate the RHS of the equation with respect to the given variable."""
         rhs = sp.diff(self.rhs, var)
         if simplify_result:
             rhs = sp.simplify(rhs)
@@ -628,6 +667,7 @@ class Equation:
         hold=None,
         simplify_result: bool = True,
     ) -> "Equation":
+        """Differentiate the equation implicitly with respect to the given variable."""
         wrt_expr = cast(sp.Expr, sp.sympify(wrt))
         dependent_expr = cast(sp.Expr, sp.sympify(dependent))
         hold_variables = _normalize_hold_variables(hold)
@@ -650,7 +690,7 @@ class Equation:
             rhs_differentiated = sp.simplify(rhs_differentiated)
         return self._new(cast(Equality, sp.Eq(lhs_differentiated, rhs_differentiated)))
 
-    def partial_for(
+    def solve_for_partial(
         self,
         dependent,
         wrt,
@@ -658,6 +698,38 @@ class Equation:
         simplify_result: bool = True,
         root=None,
     ) -> "Equation":
+        r"""Solve an implicit equation for a constrained partial derivative.
+
+        This computes a derivative directly from an implicit relation without
+        first solving the relation for the dependent variable. For a residual
+        \(F = \mathrm{lhs} - \mathrm{rhs} = 0\), the result has the form
+
+        \[
+        \left(\frac{\partial y}{\partial x}\right)_{\mathrm{hold}}
+        = -\frac{\partial F/\partial x}{\partial F/\partial y}.
+        \]
+
+        This is useful for equations of state and thermodynamic response
+        functions where solving explicitly would produce an unwieldy or
+        branch-dependent expression. Unlike
+        [diff_implicit()][matterlib.symbolic.Equation.diff_implicit], this
+        method also solves the differentiated equation for the requested
+        partial derivative.
+
+        Parameters
+        ----------
+        dependent
+            Variable treated as dependent.
+        wrt
+            Variable with respect to which the equation is differentiated.
+        hold
+            Variable or variables held constant and displayed as the
+            derivative constraint.
+        simplify_result : bool, default=True
+            Whether to simplify the differentiated equation and final result.
+        root : int, optional
+            Solution index to select when solving produces multiple roots.
+        """
         dependent_expr = cast(sp.Expr, sp.sympify(dependent))
         wrt_expr = cast(sp.Expr, sp.sympify(wrt))
         hold_variables = _normalize_hold_variables(hold)
@@ -680,12 +752,13 @@ class Equation:
     def normalize_units(
         self, decimal: bool = True, sigfigs: int | None = None
     ) -> "Equation":
+        """Try to collapse an expression down to a single unit."""
         return self._new(normalize_units(self.eq, decimal=decimal, sigfigs=sigfigs))
 
-    def apply(
-        self, expr: sp.Expr, op: Callable[[sp.Expr, sp.Expr], sp.Expr]
-    ) -> "Equation":
-        return self.map(lambda s: op(s, expr))
+    # def apply(
+    #     self, expr: sp.Expr, op: Callable[[sp.Expr, sp.Expr], sp.Expr]
+    # ) -> "Equation":
+    #     return self.map(lambda s: op(s, expr))
 
     def __add__(self, other) -> "Equation":
         if isinstance(other, Equation):
@@ -820,7 +893,7 @@ class StateEquation(Equation):
         )
         return cast(
             "StateEquation",
-            super().partial_for(
+            super().solve_for_partial(
                 dependent=dependent_expr,
                 wrt=wrt,
                 hold=hold,
@@ -908,21 +981,11 @@ class _SympyPhys:
 
     def __init__(self):
         self.units = _UnitsNamespace(units)
-        self.Derivative = sp.Derivative
-        self.lambdify = sp.lambdify
-        self.Function = sp.Function
-        self.diff = sp.diff
         self.ConstrainedPartial = ConstrainedPartial
-        self.exp = sp.exp
-        self.log = sp.log
-        self.sin = sp.sin
-        self.cos = sp.cos
-        self.tan = sp.tan
-        self.asin = sp.asin
-        self.acos = sp.acos
-        self.atan = sp.atan
-        self.Integral = sp.Integral
         self.thermo = _LazyModuleNamespace("matterlib.thermo")
+
+    def __dir__(self) -> list[str]:
+        return sorted(set(super().__dir__()) | set(dir(sp)))
 
     def Eq(self, lhs: sp.Expr, rhs: sp.Expr, **kwargs: Any) -> Equation:
         return Equation(cast(Equality, sp.Eq(lhs, rhs, **kwargs)))
@@ -1006,10 +1069,10 @@ class _SympyPhys:
 
     def display(self, expr: Equality | Equation | sp.Expr) -> Equation | sp.Expr:
         if isinstance(expr, Equation):
-            return expr.display()
+            return expr._display()
         if isinstance(expr, Equality):
             wrapped = Equation(expr)
-            return wrapped.display()
+            return wrapped._display()
         display_expr(expr)
         return expr
 
@@ -1031,7 +1094,7 @@ class _SympyPhys:
         """
         Gas constant evaluated in J/(K*kmol).
 
-        This is a convenience wrapper around eval_constant for notebook ergonomics.
+        This is a convenience wrapper around [eval_constant()][matterlib.symbolic._SympyPhys.eval_constant] for notebook ergonomics.
         """
         joule, kelvin, kilomole, molar_gas_constant = self.units(
             "joule kelvin kilomole molar_gas_constant"
@@ -1045,11 +1108,21 @@ class _SympyPhys:
         )
 
     def Delta_symbol(self, name: str) -> sp.Symbol:
+        R"""Shorthand for `sympy.Symbol("\Delta {name}")`"""
         return sp.Symbol(Rf"\Delta {name}")
 
     def solve_system(self, eqs, vars):
+        """Solve a system of equations for the given variables.
+        Parameters
+        ----------
+        eqs:
+            A list of equations to solve.
+        vars:
+            A list of variables to solve for.
+        """
         raw = []
         for e in eqs:
+            # Sympy needs its underlying equation object.
             if isinstance(e, StateEquation):
                 raw.append(e.eq)
             elif isinstance(e, Equation):
