@@ -1,15 +1,23 @@
-# matterlib k3d animation helper
+# matterlib: Theory of matter helper code
 
-Minimal, thread-free animation controls for k3d in JupyterLab 4.5+ using
-`ipywidgets.Play`. Z is the vertical axis. Camera framing is stabilized by an
-invisible bounds object.
+Python code to assist in THeory of Matter course
 
-## Quick start
+Includes
+
+- `symbolic` module for easily declaring and working with equations
+- `anim2d` module for ipycanvas animations
+- `anim3d` module for k3d animations
+
+The precomputed 3D player is thread-free and uses `ipywidgets.Play`. Stateful
+3D, chunked 3D, and 2D animations use background threads. Z is the vertical
+axis in 3D. Camera framing is stabilized by an invisible bounds object.
+
+## 3D Animation Example 
 
 ```python
 import numpy as np
 import k3d
-from matterlib import make_player
+from matterlib import anim3d
 
 y0 = 10.0
 dt = 0.01
@@ -35,7 +43,7 @@ def render(i: int) -> None:
     ball.positions = [[0, 0, z[i]]]
 
 
-player = make_player(
+player = anim3d.make_player(
     plot=plot,
     frames={"z": z, "t": t},
     render_fn=render,
@@ -50,23 +58,23 @@ player.ui  # display the controls beneath the plot
 
 Dark-theme helper:
 ```python
-from matterlib import make_dark_plot
-plot = make_dark_plot(height=400)
+from matterlib import anim3d
+plot = anim3d.make_dark_plot(height=400)
 ```
 
 ## Stateful animation (wall-clock dt + target FPS)
 
-Use `K3DAnimator` when you want the animation loop to advance with real time and
+Use `anim3d.K3DAnimator` when you want the animation loop to advance with real time and
 manage internal state (no precomputed frames). Exceptions are shown in the UI.
 Prefer passing the plot to your animator's `__init__` and constructing it yourself.
 
 ```python
 import k3d
-from matterlib import K3DAnimator, make_stateful_player, make_dark_plot
+from matterlib import anim3d
 
 g = 9.81
 
-class FreeFall(K3DAnimator):
+class FreeFall(anim3d.K3DAnimator):
     def __init__(self, plot: k3d.plot, y0: float, v0: float) -> None:
         self.y = y0
         self.v = v0
@@ -90,10 +98,10 @@ class FreeFall(K3DAnimator):
 
 
 y0, v0 = 10.0, 0.0
-plot = make_dark_plot(height=600)
+plot = anim3d.make_dark_plot(height=600)
 plot.display()
 
-player = make_stateful_player(
+player = anim3d.make_stateful_player(
     plot=plot,
     animator=FreeFall(plot, y0=y0, v0=v0),
     target_fps=60,
@@ -104,15 +112,15 @@ player = make_stateful_player(
 player.ui
 ```
 
-## 2D canvas animation (ipycanvas + RepeatedTimer)
+## 2D canvas example
 
-For 2D widgets, use `Canvas2DAnimator` + `Canvas2DPlayer`. The player follows the
-`example_2d.py` pattern: a `RepeatedTimer` drives frames at `target_fps`, and parameter
-widgets are declared via `ParamSpec`.
+For 2D widgets, use `anim2d.Canvas2DAnimator` + `anim2d.Canvas2DPlayer`. A
+`anim2d.RepeatedTimer` drives frames at `target_fps`, and parameter widgets are
+declared via `anim2d.ParamSpec`.
 
 ### Instructions
 
-Inherit from Canvas2DAnimator and implement 
+Inherit from `anim2d.Canvas2DAnimator` and implement
  - on_start
  - on_update
  - on_draw
@@ -122,21 +130,21 @@ It is helpful to call `with ipycanvas.hold_canvas` context manager during the dr
 
 The player handles:
 - Play/Pause/Step/Reset controls.
-- Recreating the `RepeatedTimer` if `target_fps` changes.
-- Parameter widgets that trigger `reset`/`redraw`/`restart_timer` based on `ParamSpec.on_change`.
+- Recreating the `anim2d.RepeatedTimer` if `target_fps` changes.
+- Parameter widgets that trigger `reset`/`redraw`/`restart_timer` based on `anim2d.ParamSpec.on_change`.
 - Drawing the first frame immediately (disable via `auto_draw_initial=False` if you prefer a blank canvas until Play).
 - Canvas sizing: pass `width`/`height` or supply your own `Canvas` instance via `canvas=`.
 
 ```python
 from ipycanvas import hold_canvas
-from matterlib import Canvas2DAnimator, Canvas2DPlayer, ParamSpec
+from matterlib import anim2d
 import ipywidgets as widgets
 from IPython.display import display
 
-class EulerOrbitAnimator(Canvas2DAnimator):
+class EulerOrbitAnimator(anim2d.Canvas2DAnimator):
     # Expose key simulation controls as widgets in the player UI.
     PARAMS = {
-        "method": ParamSpec(
+        "method": anim2d.ParamSpec(
             kind="dropdown",
             default="euler",
             options=[
@@ -148,7 +156,7 @@ class EulerOrbitAnimator(Canvas2DAnimator):
             description="method",
             on_change="reset",
         ),
-        "dt_scale": ParamSpec(
+        "dt_scale": anim2d.ParamSpec(
             kind="int_slider",
             default=200,
             min=1,
@@ -298,7 +306,7 @@ class EulerOrbitAnimator(Canvas2DAnimator):
 # Circular-orbit initial conditions at r=1 AU require vy0 = sqrt(GM/r) = 2π.
 # Use lots of substeps because forward Euler is unstable for orbits at large dt.
 anim = EulerOrbitAnimator(x0, y0, vx0, vy0, dt_scale=200, method="verlet")
-player = Canvas2DPlayer(animator=anim, target_fps=30, dt=1 / 60, title="Orbit (circular IC)")
+player = anim2d.Canvas2DPlayer(animator=anim, target_fps=30, dt=1 / 60, title="Orbit (circular IC)")
 player.canvas.layout = widgets.Layout(
     width="640px",
     height="420px",
