@@ -1,4 +1,5 @@
 import matterlib
+import matterlib.interact as interact
 from matterlib import anim2d, anim3d
 from matterlib.canvas2d_anim import Canvas2DAnimator, Canvas2DPlayer, ParamSpec
 from matterlib.k3d_anim import K3DAnimator, make_player
@@ -72,3 +73,33 @@ def test_animation_names_are_not_exported_from_package_root() -> None:
 
     for name in removed_names:
         assert not hasattr(matterlib, name)
+
+
+def test_interact_facade_is_self_contained() -> None:
+    assert set(interact.__all__) == {
+        "ADIABATIC",
+        "DEFAULT_CONSTRAINTS",
+        "ISOBARIC",
+        "ISOTHERMAL",
+        "CanvasDisplay",
+        "Constraint",
+        "DemoDisplay",
+        "EquationOfState",
+        "ExplorerPanel",
+        "Gauge",
+        "IdealGasEquationOfState",
+        "IdealGasState",
+        "PathPoint",
+        "PistonDisplay",
+        "ProcessLeg",
+        "RenderContext",
+        "SimpleChartDisplay",
+        "SliderQuantity",
+        "ThermoDemo",
+        "ThermoSession",
+        "ThermoState",
+        "TransitionResult",
+        "XYChartDisplay",
+    }
+    assert interact.IdealGasState is interact.IdealGasEquationOfState
+    assert matterlib.__all__ == ["anim2d", "anim3d", "spp"]
